@@ -1,0 +1,197 @@
+---
+sidebar_position: 6
+title: Settings API
+description: 系统设置接口 — 爬取间隔管理与调度器状态查看
+keywords: [设置, 爬取间隔, 调度器, 定时任务]
+---
+
+# Settings API
+
+系统设置管理接口。所有端点均需管理员认证。
+
+**路由前缀：** `/api/settings`
+**认证：** 需要 Bearer Token（管理员）
+
+---
+
+## GET /api/settings/crawl-interval
+
+获取当前的自动爬取间隔配置。
+
+### 请求
+
+```
+GET /api/settings/crawl-interval
+Authorization: Bearer <token>
+```
+
+### 响应
+
+**成功 (200)：**
+
+```json
+{
+  "minutes": 60,
+  "label": "每1小时"
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `minutes` | `integer` | 间隔分钟数。`0` 表示关闭自动爬取 |
+| `label` | `string` | 人类可读的间隔描述 |
+
+**预定义标签：**
+
+| minutes | label |
+|---------|-------|
+| `0` | 关闭 |
+| `1` | 每1分钟 |
+| `30` | 每30分钟 |
+| `60` | 每1小时 |
+| 其他 | 每N分钟 |
+
+### curl 示例
+
+```bash
+curl http://localhost:8000/api/settings/crawl-interval \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+---
+
+## PUT /api/settings/crawl-interval
+
+更新自动爬取间隔。修改即时生效（热更新），无需重启服务，同时持久化到 `config.json`。
+
+### 请求
+
+```
+PUT /api/settings/crawl-interval
+Content-Type: application/json
+Authorization: Bearer <token>
+```
+
+**请求体：**
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `minutes` | `integer` | 是 | 间隔分钟数，范围 0-1440。`0` = 关闭 |
+
+**请求示例：**
+
+```json
+{
+  "minutes": 30
+}
+```
+
+### 响应
+
+**成功 (200)：**
+
+```json
+{
+  "minutes": 30,
+  "label": "每30分钟"
+}
+```
+
+### 热更新流程
+
+```mermaid
+sequenceDiagram
+    participant Client as 客户端
+    participant API as Settings API
+    participant Config as config.json
+    participant Scheduler as APScheduler
+
+    Client->>API: PUT /crawl-interval {"minutes": 30}
+    API->>Config: settings.update({"minutes": 30})
+    API->>Scheduler: apply_crawl_interval(30)
+    Note over Scheduler: 移除旧任务 → 创建新 IntervalTrigger
+    API-->>Client: {"minutes": 30, "label": "每30分钟"}
+```
+
+### curl 示例
+
+设置每 30 分钟自动爬取：
+
+```bash
+curl -X PUT http://localhost:8000/api/settings/crawl-interval \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
+  -d '{"minutes": 30}'
+```
+
+关闭自动爬取：
+
+```bash
+curl -X PUT http://localhost:8000/api/settings/crawl-interval \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
+  -d '{"minutes": 0}'
+```
+
+---
+
+## GET /api/settings/scheduler
+
+查看 APScheduler 调度器的运行状态和已注册的任务列表。
+
+### 请求
+
+```
+GET /api/settings/scheduler
+Authorization: Bearer <token>
+```
+
+### 响应
+
+**成功 (200)：**
+
+```json
+{
+  "running": true,
+  "jobs": [
+    {
+      "id": "daily_crawl",
+      "trigger": "cron[hour='8', minute='30']",
+      "next_run": "2024-06-16T08:30:00"
+    },
+    {
+      "id": "interval_crawl",
+      "trigger": "interval[0:30:00]",
+      "next_run": "2024-06-15T11:00:00"
+    }
+  ],
+  "crawl_interval_minutes": 30
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `running` | `boolean` | 调度器是否正在运行 |
+| `jobs` | `array` | 已注册的任务列表 |
+| `jobs[].id` | `string` | 任务 ID：`daily_crawl`（每日定时）或 `interval_crawl`（间隔循环） |
+| `jobs[].trigger` | `string` | 触发器描述 |
+| `jobs[].next_run` | `string\|null` | 下次执行时间（ISO 8601） |
+| `crawl_interval_minutes` | `integer` | 当前间隔配置（分钟） |
+
+### 调度模式
+
+系统支持两种自动爬取调度模式：
+
+| 模式 | 配置项 | 格式 | 说明 |
+|------|--------|------|------|
+| **每日定时** | `crawl_schedule` | `"HH:MM"` | 每天在指定时间执行一次 |
+| **间隔循环** | `crawl_interval_minutes` | 分钟数（0=关闭） | 每隔 N 分钟执行一次 |
+
+两种模式可以同时存在，独立运行。
+
+### curl 示例
+
+```bash
+curl http://localhost:8000/api/settings/scheduler \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```

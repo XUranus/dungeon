@@ -1,0 +1,40 @@
+{
+  "// 说明": "复制为 config.json 并填入实际值。config.json 不会提交到 git。",
+
+  "openai_api_key": "",
+  "openai_base_url": "",
+  "openai_model": "gpt-4o",
+
+  "embedding_provider": "openai",
+  "embedding_model": "text-embedding-3-small",
+  "hf_mirror_url": "https://hf-mirror.com",
+
+  "author_name": "",
+
+  "zsxq_cookie": "",
+  "zsxq_group_id": "",
+
+  "zhihu_cookie": "",
+  "zhihu_url_token": "",
+  "zhihu_sign_server": "http://localhost:17007",
+
+  "crawl_schedule": "",
+  "crawl_interval_minutes": 0,
+
+  "admin_password": "",
+  "jwt_secret": "change-me-to-a-random-string",
+  "jwt_expire_hours": 24,
+
+  "public_chat_daily_limit": 10,
+
+  "vision_model": "",
+  "enable_bm25": true,
+  "chunk_size": 500,
+  "chunk_overlap": 80,
+
+  "api_host": "0.0.0.0",
+  "api_port": 8000,
+
+  "tavily_api_key": "",
+  "enable_tools": true
+}

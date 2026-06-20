@@ -1,0 +1,39 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.claude
+.vscode
+.idea
+
+# Data (mounted as volume)
+data/
+backend/data/
+*.db
+*.db-journal
+
+# Node modules (rebuilt in container)
+node_modules
+frontend/node_modules
+backend/node_modules
+
+# Build artifacts
+frontend/dist
+backend/dist
+*.egg-info
+__pycache__
+*.pyc
+
+# Docs
+docs/
+
+# Third-party (has its own Dockerfile)
+3rd/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Config secrets (mounted as volume)
+backend/config.json

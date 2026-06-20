@@ -1,0 +1,26 @@
+3rd/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+.venv/
+*.egg
+
+# Data
+data/
+*.db
+
+# Environment / Config
+.env
+backend/config.json
+
+# Node
+node_modules/
+frontend/dist/
+
+# IDE
+.idea/
+.vscode/
+*.swp

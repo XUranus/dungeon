@@ -1,0 +1,337 @@
+---
+sidebar_position: 5
+title: Sources API
+description: 数据源管理接口 — 触发爬取、查询平台状态、查看任务历史
+keywords: [爬虫, 数据源, 知乎, 知识星球, 爬取任务]
+---
+
+# Sources API
+
+数据源管理接口，用于触发爬虫任务、查看平台配置和任务历史。所有端点均需管理员认证。
+
+**路由前缀：** `/api/sources`
+**认证：** 需要 Bearer Token（管理员）
+
+---
+
+## GET /api/sources/platforms
+
+列出当前已启用（已配置凭据）的平台。
+
+### 请求
+
+```
+GET /api/sources/platforms
+Authorization: Bearer <token>
+```
+
+### 响应
+
+**成功 (200)：**
+
+```json
+{
+  "platforms": ["zsxq", "zhihu"]
+}
+```
+
+平台启用条件：
+- `zsxq`：配置了 `zsxq_cookie` 和 `zsxq_group_id`
+- `zhihu`：配置了 `zhihu_cookie` 和 `zhihu_url_token`
+
+### curl 示例
+
+```bash
+curl http://localhost:8000/api/sources/platforms \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+---
+
+## POST /api/sources/crawl
+
+同步爬取**所有**已启用平台。请求会阻塞直到全部完成。
+
+### 请求
+
+```
+POST /api/sources/crawl
+Authorization: Bearer <token>
+```
+
+### 响应
+
+**成功 (200)：**
+
+```json
+[
+  {
+    "platform": "zsxq",
+    "status": "done",
+    "topics_count": 15,
+    "comments_count": 42
+  },
+  {
+    "platform": "zhihu",
+    "status": "done",
+    "topics_count": 28,
+    "comments_count": 10
+  }
+]
+```
+
+**错误 (400)：** 未配置任何平台
+
+```json
+{
+  "detail": "未配置任何平台的Cookie或ID"
+}
+```
+
+### curl 示例
+
+```bash
+curl -X POST http://localhost:8000/api/sources/crawl \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+:::caution
+同步爬取可能耗时较长（数分钟到数十分钟），期间 HTTP 连接会保持。对于生产环境，建议使用异步接口。
+:::
+
+---
+
+## POST /api/sources/crawl/\{platform\}
+
+同步爬取指定的单个平台。
+
+### 请求
+
+```
+POST /api/sources/crawl/{platform}
+Authorization: Bearer <token>
+```
+
+**路径参数：**
+
+| 参数 | 类型 | 说明 |
+|------|------|------|
+| `platform` | `string` | 平台标识：`zsxq` 或 `zhihu` |
+
+### 响应
+
+**成功 (200)：**
+
+```json
+{
+  "platform": "zsxq",
+  "status": "done",
+  "topics_count": 15,
+  "comments_count": 42
+}
+```
+
+**错误 (400)：** 平台未配置
+
+```json
+{
+  "detail": "平台 zsxq 未配置"
+}
+```
+
+### curl 示例
+
+```bash
+curl -X POST http://localhost:8000/api/sources/crawl/zsxq \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+---
+
+## POST /api/sources/crawl/async
+
+启动后台爬取任务，不阻塞请求。同时只能运行一个后台任务。
+
+### 请求
+
+```
+POST /api/sources/crawl/async?platform=zsxq
+Authorization: Bearer <token>
+```
+
+**查询参数：**
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `platform` | `string` | `"zsxq"` | 要爬取的平台 |
+
+### 响应
+
+**成功 (200)：**
+
+```json
+{
+  "task_id": "crawl_abc123"
+}
+```
+
+**错误 (400)：** 平台未配置
+
+```json
+{
+  "detail": "平台 xxx 未配置"
+}
+```
+
+**错误 (409)：** 已有任务在运行
+
+```json
+{
+  "detail": "已有爬取任务在运行，请等待完成"
+}
+```
+
+### curl 示例
+
+```bash
+curl -X POST "http://localhost:8000/api/sources/crawl/async?platform=zsxq" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+---
+
+## GET /api/sources/crawl/status
+
+查询当前后台爬取任务的执行进度。任务完成后 5 秒自动清除状态。
+
+### 请求
+
+```
+GET /api/sources/crawl/status
+Authorization: Bearer <token>
+```
+
+### 响应
+
+**有任务运行中 (200)：**
+
+```json
+{
+  "phase": "saving",
+  "topics_found": 50,
+  "topics_saved": 30,
+  "comments_saved": 85
+}
+```
+
+**无任务运行 (200)：**
+
+```json
+{
+  "phase": "idle"
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `phase` | `string` | 当前阶段：`saving`（入库中）、`embedding`（向量化中）、`done`（完成）、`idle`（空闲） |
+| `topics_found` | `integer` | 发现的主题总数 |
+| `topics_saved` | `integer` | 已保存到数据库的主题数 |
+| `comments_saved` | `integer` | 已保存的评论数 |
+
+### curl 示例
+
+```bash
+curl http://localhost:8000/api/sources/crawl/status \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+---
+
+## GET /api/sources/tasks
+
+查看最近 50 条爬取任务的历史记录。
+
+### 请求
+
+```
+GET /api/sources/tasks
+Authorization: Bearer <token>
+```
+
+### 响应
+
+**成功 (200)：**
+
+```json
+[
+  {
+    "id": 42,
+    "platform": "zsxq",
+    "status": "done",
+    "topics_count": 15,
+    "comments_count": 42,
+    "error_message": null,
+    "started_at": "2024-06-15T10:30:00",
+    "finished_at": "2024-06-15T10:35:22"
+  },
+  {
+    "id": 41,
+    "platform": "zhihu",
+    "status": "error",
+    "topics_count": 0,
+    "comments_count": 0,
+    "error_message": "HTTP 401: Cookie已过期",
+    "started_at": "2024-06-15T09:00:00",
+    "finished_at": "2024-06-15T09:00:05"
+  }
+]
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `id` | `integer` | 任务 ID |
+| `platform` | `string` | 平台标识 |
+| `status` | `string` | 状态：`pending`、`running`、`done`、`error` |
+| `topics_count` | `integer` | 新增主题数 |
+| `comments_count` | `integer` | 新增评论数 |
+| `error_message` | `string\|null` | 错误信息（仅 `status=error` 时） |
+| `started_at` | `string\|null` | 开始时间（ISO 8601） |
+| `finished_at` | `string\|null` | 结束时间（ISO 8601） |
+
+### curl 示例
+
+```bash
+curl http://localhost:8000/api/sources/tasks \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+---
+
+## 爬取流程概览
+
+```mermaid
+flowchart TD
+    A[触发爬取] --> B{增量/全量?}
+    B -->|增量| C[查询最后爬取时间 since]
+    B -->|全量| D[since = None]
+
+    C --> E[爬取主题列表]
+    D --> E
+
+    E --> F[遍历每条主题]
+    F --> G{数据库中存在?}
+    G -->|是| H[跳过]
+    G -->|否| I[写入 SQLite]
+    I --> J[爬取评论]
+    J --> K[写入评论]
+    K --> L[预处理文本]
+    L --> M[文本切分 chunk]
+    M --> N[生成 Embedding]
+    N --> O[写入 ChromaDB]
+    O --> P[更新 BM25 索引]
+
+    H --> F
+    K --> F
+    F -->|全部完成| Q[任务完成]
+```
