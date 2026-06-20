@@ -423,7 +423,7 @@ export default function SettingsPage() {
   const renderHoldings = () => (
     <section className="glass-card dark:glass-card-dark rounded-xl p-5">
       <h2 className="text-lg font-medium mb-1 text-neutral-800 dark:text-neutral-200 flex items-center gap-2">
-        <Sparkles className="w-5 h-5 text-amber-500" />
+        <Sparkles className="w-5 h-5 text-neutral-400" />
         推荐持仓管理
       </h2>
       <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-4">

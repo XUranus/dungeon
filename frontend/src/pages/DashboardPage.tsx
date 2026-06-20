@@ -1,7 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
-import { Loader2, Send, TrendingUp, TrendingDown, Minus, Sparkles, Signal, Wifi, BatteryFull, ChevronUp, ChevronDown } from 'lucide-react'
+import { Loader2, Send, TrendingUp, TrendingDown, Minus, Signal, Wifi, BatteryFull, ChevronUp, ChevronDown, Sparkles } from 'lucide-react'
+import Logo from '../components/Logo'
 import { MarkdownMessage } from '../components/chat/MarkdownMessage'
 import {
   fetchSystemInfo,
@@ -19,7 +20,11 @@ const PLATFORM_LABELS: Record<string, string> = {
 }
 const PLATFORM_COLORS: Record<string, string> = {
   zhihu: '#3B82F6', xueqiu: '#F97316', xiaohongshu: '#EF4444',
-  weibo: '#F43F5E', douyin: '#A3A3A3', zsxq: '#EAB308',
+  weibo: '#F43F5E', douyin: '#A3A3A3', zsxq: '#22C55E',
+}
+const PLATFORM_BADGE_OVERRIDES: Record<string, { bg: string; color: string }> = {
+  zhihu: { bg: '#1D4ED8', color: '#FFFFFF' },
+  zsxq:  { bg: '#15803D', color: '#FFFFFF' },
 }
 const SENTIMENT_CONFIG = {
   bullish: { label: '看多', color: '#22C55E', icon: TrendingUp },
@@ -38,6 +43,39 @@ function formatDate(dateStr: string | null): string {
   const diffD = Math.floor(diffH / 24)
   if (diffD < 7) return `${diffD}天前`
   return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
+}
+
+interface QAPart {
+  type: 'question' | 'answer'
+  text: string
+}
+
+function parseQAPreview(content: string): QAPart[] {
+  const parts: QAPart[] = []
+  const regex = /\[(提问|回答)]\s*(?:[^\n:：]+?\s*[:：])?\s*/g
+  const matches: { type: 'question' | 'answer'; index: number; endOfHeader: number }[] = []
+
+  let match: RegExpExecArray | null
+  while ((match = regex.exec(content)) !== null) {
+    matches.push({
+      type: match[1] === '提问' ? 'question' : 'answer',
+      index: match.index,
+      endOfHeader: match.index + match[0].length,
+    })
+  }
+
+  if (matches.length === 0) {
+    return [{ type: 'answer', text: content }]
+  }
+
+  for (let i = 0; i < matches.length; i++) {
+    const start = matches[i].endOfHeader
+    const end = i + 1 < matches.length ? matches[i + 1].index : content.length
+    const text = content.slice(start, end).trim()
+    if (text) parts.push({ type: matches[i].type, text })
+  }
+
+  return parts
 }
 
 /* ── Auto-scrolling ticker ── */
@@ -59,11 +97,7 @@ function ScrollTicker({ items }: { items: DashboardSummaryItem[] }) {
 
   if (items.length === 0) return null
 
-  const visible = [
-    items[currentIndex % items.length],
-    items[(currentIndex + 1) % items.length],
-    items[(currentIndex + 2) % items.length],
-  ]
+  const visible = [items[currentIndex % items.length]]
 
   return (
     <div
@@ -91,34 +125,66 @@ function ScrollTicker({ items }: { items: DashboardSummaryItem[] }) {
       <div className="flex-1 space-y-3 overflow-hidden">
         {visible.map((item, i) => {
           const platColor = PLATFORM_COLORS[item.platform] || '#A3A3A3'
+          const isQA = item.content_type === 'q&a'
+          const qaParts = isQA ? parseQAPreview(item.content_preview) : null
           return (
             <div
               key={`${item.id}-${currentIndex}-${i}`}
-              className="rounded-xl p-4 transition-all duration-500 ease-out cursor-pointer hover:scale-[1.01]"
+              className="rounded-xl p-5 transition-all duration-500 ease-out cursor-pointer hover:scale-[1.01]"
               style={{
                 background: `linear-gradient(135deg, ${platColor}08, ${platColor}04)`,
                 border: `1px solid ${platColor}20`,
-                opacity: i === 0 ? 1 : i === 1 ? 0.75 : 0.5,
-                transform: `scale(${1 - i * 0.02})`,
               }}
             >
-              <div className="flex items-center gap-2 mb-2">
+              {/* Header */}
+              <div className="flex items-center gap-2 mb-3">
                 <span
-                  className="text-xs font-bold px-2 py-0.5 rounded-full"
-                  style={{ background: `${platColor}20`, color: platColor }}
+                  className="text-sm font-bold px-2.5 py-0.5 rounded-full"
+                  style={PLATFORM_BADGE_OVERRIDES[item.platform] || { background: `${platColor}20`, color: platColor }}
                 >
                   {PLATFORM_LABELS[item.platform] || item.platform}
                 </span>
+                {isQA && (
+                  <span className="text-sm px-2 py-0.5 rounded bg-white/8 text-neutral-400">问答</span>
+                )}
                 {item.title && (
-                  <span className="text-xs text-neutral-500 dark:text-neutral-400 truncate flex-1">
+                  <span className="text-sm text-neutral-500 dark:text-neutral-400 truncate flex-1">
                     {item.title}
                   </span>
                 )}
               </div>
-              <p className="text-sm text-neutral-300 dark:text-neutral-300 line-clamp-3 leading-relaxed">
-                {item.content_preview}
-              </p>
-              <div className="flex items-center gap-3 mt-2 text-xs text-neutral-500">
+
+              {/* Content */}
+              {isQA && qaParts && qaParts.length > 0 ? (
+                <div className="space-y-2.5">
+                  {qaParts.map((part, pi) => (
+                    <div
+                      key={pi}
+                      className="rounded-lg px-4 py-3"
+                      style={{
+                        background: part.type === 'question' ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)',
+                        borderLeft: `2px solid ${part.type === 'question' ? '#A3A3A3' : '#525252'}`,
+                      }}
+                    >
+                      <div className="flex items-center gap-1.5 mb-1.5">
+                        <span className="text-sm text-neutral-400">
+                          {part.type === 'question' ? '❓ 提问' : '💬 回答'}
+                        </span>
+                      </div>
+                      <p className="text-sm text-neutral-300 line-clamp-3 leading-relaxed">
+                        {part.text}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-base text-neutral-300 dark:text-neutral-300 line-clamp-4 leading-relaxed">
+                  {item.content_preview}
+                </p>
+              )}
+
+              {/* Footer */}
+              <div className="flex items-center gap-3 mt-3 text-sm text-neutral-500">
                 {item.like_count > 0 && <span>👍 {item.like_count}</span>}
                 <span>{formatDate(item.published_at)}</span>
               </div>
@@ -135,7 +201,7 @@ function ScrollTicker({ items }: { items: DashboardSummaryItem[] }) {
             onClick={() => { setPaused(true); setCurrentIndex(i) }}
             className="w-1.5 h-1.5 rounded-full transition-all duration-300"
             style={{
-              background: i === currentIndex ? '#D4A853' : '#3A3A3A',
+              background: i === currentIndex ? '#E5E5E5' : '#3A3A3A',
               transform: i === currentIndex ? 'scale(1.3)' : 'scale(1)',
             }}
           />
@@ -187,8 +253,8 @@ function PhoneChat({
       {/* Chat header */}
       <div className="phone-header">
         <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-amber-500 to-amber-700 flex items-center justify-center">
-            <Sparkles className="w-4 h-4 text-white" />
+          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-neutral-700 to-neutral-900 flex items-center justify-center">
+            <Logo className="text-neutral-200" size={16} />
           </div>
           <div>
             <div className="text-sm font-semibold text-neutral-100">AI 助手</div>
@@ -201,8 +267,8 @@ function PhoneChat({
       <div className="phone-messages">
         {messages.length === 0 && !isLoading && (
           <div className="flex flex-col items-center justify-center h-full text-center px-6">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-amber-500/20 to-amber-700/10 flex items-center justify-center mb-4">
-              <Sparkles className="w-8 h-8 text-amber-500" />
+            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-neutral-800/60 to-neutral-900/40 flex items-center justify-center mb-4">
+              <Logo className="text-neutral-400" size={32} />
             </div>
             <p className="text-sm text-neutral-400 mb-1">{systemSubtitle}</p>
             <p className="text-xs text-neutral-500 mb-4">每日 {chatRemaining} 次免费问答</p>
@@ -344,8 +410,8 @@ export default function DashboardPage() {
       <header className="dashboard-header">
         <div className="dashboard-header-inner">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-amber-500 to-amber-700 flex items-center justify-center shadow-lg shadow-amber-500/20">
-              <Sparkles className="w-5 h-5 text-white" />
+            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-neutral-700 to-neutral-900 flex items-center justify-center shadow-lg shadow-neutral-900/20">
+              <Logo className="text-neutral-200" size={20} />
             </div>
             <div>
               <h1 className="text-lg sm:text-xl font-bold tracking-tight text-neutral-100">
@@ -366,7 +432,7 @@ export default function DashboardPage() {
         <div className="dashboard-holdings">
           <div className="dashboard-holdings-inner">
             <div className="flex items-center gap-2 mb-3">
-              <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+              <Sparkles className="w-3.5 h-3.5 text-neutral-400" />
               <span className="text-xs font-semibold text-neutral-400 uppercase tracking-wider">
                 AI 推荐持仓
               </span>

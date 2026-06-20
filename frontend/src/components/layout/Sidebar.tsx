@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { NavLink } from 'react-router-dom'
 import { MessageSquare, FileText, Settings, RefreshCw, Sun, Moon, LogOut, Home } from 'lucide-react'
+import Logo from '../Logo'
 import { useTheme } from '../../contexts/ThemeContext'
 import { useAuth } from '../../contexts/AuthContext'
 import { fetchSystemInfo, type SystemInfo } from '../../services/api'
@@ -33,6 +34,9 @@ export default function Sidebar() {
     <aside className="w-56 flex flex-col glass dark:glass-dark border-r border-neutral-200/50 dark:border-neutral-700/50 shrink-0">
       {/* Brand */}
       <div className="px-4 py-5 border-b border-neutral-200/50 dark:border-neutral-700/50">
+        <div className="flex items-center gap-2 mb-2">
+          <Logo className="text-neutral-900 dark:text-neutral-100" size={32} />
+        </div>
         <h1 className="text-lg font-bold text-neutral-900 dark:text-neutral-100">
           {systemInfo.system_title}
         </h1>
