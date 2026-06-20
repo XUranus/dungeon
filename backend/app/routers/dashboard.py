@@ -8,10 +8,12 @@ from fastapi import APIRouter, Depends, Request, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db, async_session
 from app.models import Topic, PublicVisitor, PublicMessage, RecommendedHolding
 from app.config import settings
+from app.schemas import ChatRequestBase
 from app.services.rag import rag_query_stream
 from app.utils.streaming import ui_stream_response
 
@@ -36,33 +38,8 @@ class SummaryItem(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class UIMessage(BaseModel):
-    role: str
-    content: str | None = None
-    parts: list[dict] | None = None  # AI SDK v6 格式
-
-
-class DashboardChatRequest(BaseModel):
-    message: str | None = None  # 旧格式
-    messages: list[UIMessage] | None = None  # AI SDK v6 格式
+class DashboardChatRequest(ChatRequestBase):
     visitor_id: str | None = None
-
-    def get_user_message(self) -> str:
-        """提取用户最新消息（兼容新旧两种格式）"""
-        if self.message:
-            return self.message
-        if self.messages:
-            # 从后往前找最后一条 user 消息
-            for m in reversed(self.messages):
-                if m.role == "user":
-                    # 优先从 content 取，其次从 parts 取
-                    if m.content:
-                        return m.content
-                    if m.parts:
-                        for p in m.parts:
-                            if p.get("type") == "text" and p.get("text"):
-                                return p["text"]
-        return ""
 
 
 CONTENT_PREVIEW_LEN = 200
@@ -83,12 +60,20 @@ async def _get_or_create_visitor(
         if visitor:
             return visitor
 
-    # 创建新 visitor
+    # 创建新 visitor（处理并发竞态：ON CONFLICT DO NOTHING + 重试 SELECT）
     vid = secrets.token_hex(16)  # 32 字符 hex
     visitor = PublicVisitor(visitor_id=vid)
     db.add(visitor)
-    await db.commit()
-    await db.refresh(visitor)
+    try:
+        await db.commit()
+        await db.refresh(visitor)
+    except IntegrityError:
+        await db.rollback()
+        # 并发请求已创建，重新查询
+        result = await db.execute(
+            select(PublicVisitor).where(PublicVisitor.visitor_id == vid)
+        )
+        visitor = result.scalar_one()
     logger.info("New public visitor created: %s", vid)
 
     response.set_cookie(
@@ -96,6 +81,7 @@ async def _get_or_create_visitor(
         max_age=VISITOR_COOKIE_MAX_AGE,
         httponly=False,  # 前端需要读取
         samesite="lax",
+        secure=True,
     )
     return visitor
 
@@ -118,8 +104,9 @@ async def dashboard_summary(
 
     items = []
     for t in topics:
-        preview = t.content[:CONTENT_PREVIEW_LEN]
-        if len(t.content) > CONTENT_PREVIEW_LEN:
+        content = t.content or ""
+        preview = content[:CONTENT_PREVIEW_LEN]
+        if len(content) > CONTENT_PREVIEW_LEN:
             preview += "..."
         items.append(
             SummaryItem(
@@ -228,8 +215,8 @@ async def dashboard_chat(
             detail=f"今日免费问答次数已用完（{settings.public_chat_daily_limit}次），请明天再试",
         )
 
-    # 加载最近历史消息用于多轮对话（限制为最近24条，RAG引擎截取最后12条）
-    MAX_HISTORY = 24
+    # 加载最近历史消息用于多轮对话（RAG引擎截取最后12条）
+    MAX_HISTORY = 12
     history_result = await db.execute(
         select(PublicMessage)
         .where(PublicMessage.visitor_id == vid)

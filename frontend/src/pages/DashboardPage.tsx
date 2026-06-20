@@ -3,7 +3,7 @@ import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
 import { Loader2, Send, TrendingUp, TrendingDown, Minus, Signal, Wifi, BatteryFull, ChevronUp, ChevronDown, Sparkles } from 'lucide-react'
 import Logo from '../components/Logo'
-import { MarkdownMessage } from '../components/chat/MarkdownMessage'
+import { parseQA } from '../utils/qa'
 import {
   fetchSystemInfo,
   fetchDashboardSummary,
@@ -43,39 +43,6 @@ function formatDate(dateStr: string | null): string {
   const diffD = Math.floor(diffH / 24)
   if (diffD < 7) return `${diffD}天前`
   return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
-}
-
-interface QAPart {
-  type: 'question' | 'answer'
-  text: string
-}
-
-function parseQAPreview(content: string): QAPart[] {
-  const parts: QAPart[] = []
-  const regex = /\[(提问|回答)]\s*(?:[^\n:：]+?\s*[:：])?\s*/g
-  const matches: { type: 'question' | 'answer'; index: number; endOfHeader: number }[] = []
-
-  let match: RegExpExecArray | null
-  while ((match = regex.exec(content)) !== null) {
-    matches.push({
-      type: match[1] === '提问' ? 'question' : 'answer',
-      index: match.index,
-      endOfHeader: match.index + match[0].length,
-    })
-  }
-
-  if (matches.length === 0) {
-    return [{ type: 'answer', text: content }]
-  }
-
-  for (let i = 0; i < matches.length; i++) {
-    const start = matches[i].endOfHeader
-    const end = i + 1 < matches.length ? matches[i + 1].index : content.length
-    const text = content.slice(start, end).trim()
-    if (text) parts.push({ type: matches[i].type, text })
-  }
-
-  return parts
 }
 
 /* ── Auto-scrolling ticker ── */
@@ -126,7 +93,7 @@ function ScrollTicker({ items }: { items: DashboardSummaryItem[] }) {
         {visible.map((item, i) => {
           const platColor = PLATFORM_COLORS[item.platform] || '#A3A3A3'
           const isQA = item.content_type === 'q&a'
-          const qaParts = isQA ? parseQAPreview(item.content_preview) : null
+          const qaParts = isQA ? parseQA(item.content_preview) : null
           return (
             <div
               key={`${item.id}-${currentIndex}-${i}`}
@@ -145,7 +112,7 @@ function ScrollTicker({ items }: { items: DashboardSummaryItem[] }) {
                   {PLATFORM_LABELS[item.platform] || item.platform}
                 </span>
                 {isQA && (
-                  <span className="text-sm px-2 py-0.5 rounded bg-white/8 text-neutral-400">问答</span>
+                  <span className="text-sm px-2 py-0.5 rounded bg-white/5 text-neutral-400">问答</span>
                 )}
                 {item.title && (
                   <span className="text-sm text-neutral-500 dark:text-neutral-400 truncate flex-1">
@@ -461,7 +428,7 @@ export default function DashboardPage() {
         {/* Left: Latest Updates */}
         <aside className="updates-panel">
           <div className="flex items-center gap-2 mb-4">
-            <div className="w-1 h-5 rounded-full bg-amber-500" />
+            <div className="w-1 h-5 rounded-full bg-neutral-400" />
             <h2 className="text-sm font-bold text-neutral-200 tracking-wide uppercase">最新动态</h2>
             <span className="text-xs text-neutral-600 ml-auto">{summaryItems.length} 条</span>
           </div>

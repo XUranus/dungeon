@@ -259,6 +259,37 @@ async def rag_query_stream(
         if full_text:
             yield {"type": "text", "data": full_text}
 
+    # ── 辅助: 第二次 LLM 调用（流式） ──
+    async def _stream_followup(messages: list[dict], label: str):
+        """执行 followup LLM 调用，流式 yield 事件"""
+        try:
+            resp = await client.chat.completions.create(
+                model=settings.openai_model,
+                messages=messages,
+                temperature=0.3,
+                stream=True,
+            )
+        except Exception:
+            logger.exception(f"LLM第二次调用失败（{label}）")
+            yield {"type": "error", "data": "模型服务异常，请稍后重试"}
+            return
+
+        full = ""
+        async for chunk in resp:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta.content:
+                full += delta.content
+                yield {"type": "text", "data": delta.content}
+
+        log_llm_call(
+            model=settings.openai_model,
+            messages=messages,
+            response_text=full,
+            extra={"call": f"followup_{label}"},
+        )
+
     # ── 处理工具调用 ──
     if has_native_tools:
         assistant_tool_calls = [
@@ -296,34 +327,8 @@ async def rag_query_stream(
                 "content": result,
             })
 
-        try:
-            response2 = await client.chat.completions.create(
-                model=settings.openai_model,
-                messages=messages,
-                temperature=0.3,
-                stream=True,
-            )
-        except Exception:
-            logger.exception("LLM第二次调用失败（native tools）")
-            yield {"type": "error", "data": "模型服务异常，请稍后重试"}
-            return
-
-        resp2_text = ""
-        async for chunk in response2:
-            if not chunk.choices:
-                continue
-            delta = chunk.choices[0].delta
-            if delta.content:
-                resp2_text += delta.content
-                yield {"type": "text", "data": delta.content}
-
-        # 审计: 第二次 LLM 调用 (native tools)
-        log_llm_call(
-            model=settings.openai_model,
-            messages=messages,
-            response_text=resp2_text,
-            extra={"call": "followup_native_tools"},
-        )
+        async for event in _stream_followup(messages, "native_tools"):
+            yield event
 
     elif has_text_tools:
         # 只执行已注册的工具，忽略模型幻觉出的工具
@@ -357,31 +362,5 @@ async def rag_query_stream(
                 "content": messages[0]["content"].replace("\n\n" + TOOL_USAGE_PROMPT, ""),
             }
 
-            try:
-                response2 = await client.chat.completions.create(
-                    model=settings.openai_model,
-                    messages=messages,
-                    temperature=0.3,
-                    stream=True,
-                )
-            except Exception:
-                logger.exception("LLM第二次调用失败（text tools）")
-                yield {"type": "error", "data": "模型服务异常，请稍后重试"}
-                return
-
-            resp2_text = ""
-            async for chunk in response2:
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    resp2_text += delta.content
-                    yield {"type": "text", "data": delta.content}
-
-            # 审计: 第二次 LLM 调用 (text tools)
-            log_llm_call(
-                model=settings.openai_model,
-                messages=messages,
-                response_text=resp2_text,
-                extra={"call": "followup_text_tools"},
-            )
+            async for event in _stream_followup(messages, "text_tools"):
+                yield event

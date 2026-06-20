@@ -1,5 +1,6 @@
 """管理员 JWT 认证"""
 
+import logging
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Depends, HTTPException, status
@@ -7,6 +8,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from jose import JWTError, jwt
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -16,6 +19,8 @@ ALGORITHM = "HS256"
 
 def create_token() -> str:
     """签发管理员 JWT token"""
+    if settings.jwt_secret == "change-me-to-a-random-string":
+        logger.warning("⚠️  JWT 使用默认密钥签发 token — 仅限开发环境！")
     expire = datetime.now(timezone.utc) + timedelta(hours=settings.jwt_expire_hours)
     payload = {"sub": "admin", "exp": expire}
     return jwt.encode(payload, settings.jwt_secret, algorithm=ALGORITHM)

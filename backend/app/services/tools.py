@@ -1,5 +1,6 @@
 """工具注册与执行 — OpenAI Function Calling 支持"""
 
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -105,25 +106,36 @@ async def execute_tool(name: str, arguments: dict) -> str:
         return f"工具执行出错: {e}"
 
 
+# 共享 httpx 客户端（连接池复用）
+_http_client: httpx.AsyncClient | None = None
+
+
+def _get_http_client() -> httpx.AsyncClient:
+    global _http_client
+    if _http_client is None or _http_client.is_closed:
+        _http_client = httpx.AsyncClient(timeout=15)
+    return _http_client
+
+
 async def _web_search(query: str) -> str:
     """通过 Tavily Search API 搜索网络"""
     api_key = settings.tavily_api_key
     if not api_key:
         return "搜索功能未配置（缺少 Tavily API Key）"
 
-    async with httpx.AsyncClient(timeout=15) as client:
-        resp = await client.post(
-            "https://api.tavily.com/search",
-            json={
-                "api_key": api_key,
-                "query": query,
-                "search_depth": "basic",
-                "max_results": 5,
-                "include_answer": True,
-            },
-        )
-        resp.raise_for_status()
-        data = resp.json()
+    client = _get_http_client()
+    resp = await client.post(
+        "https://api.tavily.com/search",
+        json={
+            "api_key": api_key,
+            "query": query,
+            "search_depth": "basic",
+            "max_results": 5,
+            "include_answer": True,
+        },
+    )
+    resp.raise_for_status()
+    data = resp.json()
 
     parts: list[str] = []
 
@@ -156,13 +168,19 @@ async def _get_stock_quote(symbol: str) -> str:
     except ImportError:
         return "yfinance 未安装，请运行 pip install yfinance"
 
-    ticker = yf.Ticker(symbol)
-    info = ticker.info
+    # 在线程池中执行同步网络调用，避免阻塞事件循环
+    def _fetch():
+        ticker = yf.Ticker(symbol)
+        return ticker.info
+
+    info = await asyncio.to_thread(_fetch)
 
     if not info or info.get("regularMarketPrice") is None:
         # 尝试 fast_info
         try:
-            fast = ticker.fast_info
+            def _fetch_fast():
+                return yf.Ticker(symbol).fast_info
+            fast = await asyncio.to_thread(_fetch_fast)
             price = fast.get("lastPrice") or fast.get("previousClose")
             if price:
                 return _format_stock_from_fast(symbol, fast)
@@ -173,17 +191,21 @@ async def _get_stock_quote(symbol: str) -> str:
     name = info.get("shortName") or info.get("longName") or symbol
     price = info.get("regularMarketPrice", 0)
     prev_close = info.get("regularMarketPreviousClose", 0)
-    change = price - prev_close if prev_close else 0
-    change_pct = (change / prev_close * 100) if prev_close else 0
     volume = info.get("regularMarketVolume", 0)
     currency = info.get("currency", "")
+    return _format_stock_quote(name or symbol, price, prev_close, volume, currency)
 
+
+def _format_stock_quote(name: str, price: float, prev_close: float, volume: float, currency: str = "") -> str:
+    """统一的股票行情格式化"""
+    change = price - prev_close if prev_close else 0
+    change_pct = (change / prev_close * 100) if prev_close else 0
     arrow = "↑" if change >= 0 else "↓"
     sign = "+" if change >= 0 else ""
-
+    cur = f" {currency}" if currency else ""
     return (
-        f"**{name}** ({symbol})\n"
-        f"- 最新价: {price} {currency}\n"
+        f"**{name}**\n"
+        f"- 最新价: {price:,.2f}{cur}\n"
         f"- 涨跌: {sign}{change:.2f} ({arrow}{sign}{change_pct:.2f}%)\n"
         f"- 成交量: {volume:,.0f}\n"
         f"- 数据时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
@@ -195,18 +217,8 @@ def _format_stock_from_fast(symbol: str, fast) -> str:
     try:
         price = fast.get("lastPrice") or 0
         prev = fast.get("previousClose") or 0
-        change = price - prev if prev else 0
-        change_pct = (change / prev * 100) if prev else 0
         volume = fast.get("lastVolume") or 0
-        arrow = "↑" if change >= 0 else "↓"
-        sign = "+" if change >= 0 else ""
-        return (
-            f"**{symbol}**\n"
-            f"- 最新价: {price:.2f}\n"
-            f"- 涨跌: {sign}{change:.2f} ({arrow}{sign}{change_pct:.2f}%)\n"
-            f"- 成交量: {volume:,.0f}\n"
-            f"- 数据时间: {datetime.now().strftime('%Y-%m-%d %H:%M')}"
-        )
+        return _format_stock_quote(symbol, price, prev, volume)
     except Exception as e:
         return f"格式化 {symbol} 行情数据失败: {e}"
 
@@ -226,11 +238,25 @@ async def _get_market_overview() -> str:
         ("标普500", "^GSPC"),
     ]
 
+    def _fetch_all():
+        results = []
+        for name, symbol in indices:
+            try:
+                ticker = yf.Ticker(symbol)
+                fast = ticker.fast_info
+                results.append((name, symbol, fast, None))
+            except Exception as e:
+                results.append((name, symbol, None, e))
+        return results
+
+    fetched = await asyncio.to_thread(_fetch_all)
+
     parts: list[str] = []
-    for name, symbol in indices:
+    for name, symbol, fast, err in fetched:
+        if err or not fast:
+            parts.append(f"- **{name}**: 获取失败 ({err})")
+            continue
         try:
-            ticker = yf.Ticker(symbol)
-            fast = ticker.fast_info
             price = fast.get("lastPrice") or fast.get("previousClose") or 0
             prev = fast.get("previousClose") or 0
             change = price - prev if prev else 0
@@ -241,6 +267,6 @@ async def _get_market_overview() -> str:
                 f"- **{name}**: {price:,.2f}  {arrow}{sign}{change_pct:.2f}%"
             )
         except Exception as e:
-            parts.append(f"- **{name}**: 获取失败 ({e})")
+            parts.append(f"- **{name}**: 格式化失败 ({e})")
 
     return f"**主要市场指数** ({datetime.now().strftime('%Y-%m-%d %H:%M')})\n\n" + "\n".join(parts)

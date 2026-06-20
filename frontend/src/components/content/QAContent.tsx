@@ -1,43 +1,5 @@
 import RichContent from './RichContent'
-
-interface QAPart {
-  type: 'question' | 'answer'
-  author: string
-  text: string
-}
-
-function parseQA(content: string): QAPart[] {
-  const parts: QAPart[] = []
-  // Match [提问] or [回答] with optional author (handles both "[提问] name:" and "[提问]:")
-  const regex = /\[(提问|回答)]\s*(?:([^\n:：]+?)\s*[:：])?\s*/g
-  const matches: { type: 'question' | 'answer'; author: string; index: number; endOfHeader: number }[] = []
-
-  let match: RegExpExecArray | null
-  while ((match = regex.exec(content)) !== null) {
-    matches.push({
-      type: match[1] === '提问' ? 'question' : 'answer',
-      author: (match[2] || '').trim(),
-      index: match.index,
-      endOfHeader: match.index + match[0].length,
-    })
-  }
-
-  if (matches.length === 0) {
-    return [{ type: 'answer', author: '', text: content }]
-  }
-
-  for (let i = 0; i < matches.length; i++) {
-    const start = matches[i].endOfHeader
-    const end = i + 1 < matches.length ? matches[i + 1].index : content.length
-    parts.push({
-      type: matches[i].type,
-      author: matches[i].author,
-      text: content.slice(start, end).trim(),
-    })
-  }
-
-  return parts
-}
+import { parseQA } from '../../utils/qa'
 
 interface QAContentProps {
   content: string
