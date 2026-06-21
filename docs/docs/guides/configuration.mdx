@@ -1,246 +1,312 @@
 ---
 sidebar_position: 3
-title: 配置说明
-description: Dungeon Lord 配置文件完整参考
-keywords: [配置, config.json, 热更新, Settings API]
+title: Configuration Reference
+description: Complete reference for all configuration options
+keywords: [configuration, config.json, settings]
 ---
 
-# 配置说明
+# Configuration Reference
 
-Dungeon Lord 使用 `config.json` 文件进行集中配置管理。配置支持 **热更新**，大部分配置项修改后无需重启服务即可生效。
+Dungeon Lord uses a single `config.json` file for all settings. The configuration
+supports **hot-reload** — most options take effect immediately after saving, without
+restarting the server.
 
-## 配置文件位置
+---
 
-系统按以下优先级查找配置文件：
+## Config File Location
 
-1. `backend/config.json`（推荐）
-2. 项目根目录 `config.json`（备选）
+The system searches for the configuration file in this order:
 
-首次启动时，如果 `config.json` 不存在，系统会自动从 `config.example.json` 复制一份。
+1. `backend/config.json` (recommended)
+2. Project root `config.json` (fallback)
 
-## 完整配置项参考
-
-### LLM 相关
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `openai_api_key` | string | `""` | OpenAI 或兼容服务的 API 密钥 |
-| `openai_base_url` | string | `""` | API 基础 URL。留空使用 OpenAI 官方地址；填入其他地址可使用兼容服务 |
-| `openai_model` | string | `"gpt-4o"` | 用于问答生成的模型名称 |
-| `vision_model` | string | `""` | 视觉模型名称（用于图片理解，留空则不启用） |
-
-### 嵌入模型相关
-
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `embedding_provider` | string | `"openai"` | 嵌入模型提供商。`"openai"` 使用 API 服务，`"local"` 使用本地 bge-small-zh-v1.5 |
-| `embedding_model` | string | `"text-embedding-3-small"` | 嵌入模型名称（当 provider 为 openai 时生效） |
-| `hf_mirror_url` | string | `"https://hf-mirror.com"` | HuggingFace 镜像地址（下载本地模型时使用） |
+On first startup, if no `config.json` exists, the system automatically copies
+`config.example.json` to create one.
 
 :::tip
-国内网络环境下，建议将 `hf_mirror_url` 保持默认的 `https://hf-mirror.com`，以加速本地模型下载。
+You can edit `config.json` by hand or update it at runtime through the admin
+Settings API — both approaches are equivalent.
 :::
 
-### 爬虫相关
+---
 
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `author_name` | string | `""` | 目标 KOL 名称（用于系统提示词和展示） |
-| `zsxq_cookie` | string | `""` | 知识星球登录 Cookie |
-| `zsxq_group_id` | string | `""` | 知识星球的星球 ID |
-| `zhihu_cookie` | string | `""` | 知乎登录 Cookie |
-| `zhihu_url_token` | string | `""` | 知乎用户的 URL Token（个人主页 URL 中的标识符） |
-| `zhihu_sign_server` | string | `"http://localhost:17007"` | 知乎签名服务器地址（用于 API 签名） |
-| `crawl_schedule` | string | `""` | Cron 表达式（如 `"0 3 * * *"` 表示每天凌晨 3 点） |
-| `crawl_interval_minutes` | int | `0` | 定时爬取间隔（分钟），`0` 表示关闭。与 `crawl_schedule` 二选一 |
+## LLM Settings
 
-### 认证与安全
+These fields control which language model is used for answer generation.
 
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `admin_password` | string | `""` | 管理员登录密码 |
-| `jwt_secret` | string | `"change-me-to-a-random-string"` | JWT 签名密钥，**必须修改为随机字符串** |
-| `jwt_expire_hours` | int | `24` | JWT 令牌过期时间（小时） |
-| `public_chat_daily_limit` | int | `10` | 公众用户（未登录）每日问答次数限制 |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `openai_api_key` | string | `""` | API key for OpenAI or any OpenAI-compatible provider. **Required.** |
+| `openai_base_url` | string | `""` | Base URL for the API. Leave empty for OpenAI official; set to a custom URL for compatible services (e.g. DeepSeek, Moonshot, Ollama). |
+| `openai_model` | string | `"gpt-4o"` | Model name used for chat completions (answer generation). |
+| `vision_model` | string | `""` | Vision-capable model name for image understanding. Leave empty to disable vision support. |
+
+:::note
+When using a third-party compatible provider, set `openai_base_url` to the
+provider's API endpoint. For example, for Ollama running locally:
+`"http://localhost:11434/v1"`.
+:::
+
+---
+
+## Embedding Settings
+
+These fields control how text chunks are converted into dense vectors.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `embedding_provider` | string | `"openai"` | Embedding backend. `"openai"` uses the OpenAI embedding API; `"local"` uses the locally-downloaded `bge-small-zh-v1.5` model via sentence-transformers. |
+| `embedding_model` | string | `"text-embedding-3-small"` | Model name when `embedding_provider` is `"openai"`. Ignored for local provider. |
+| `hf_mirror_url` | string | `"https://hf-mirror.com"` | HuggingFace mirror URL for downloading the local model. Useful for users in China. |
+
+:::tip
+The local embedding model (`bge-small-zh-v1.5`) is a good choice if you want to
+avoid API costs or need offline operation. It requires roughly 100 MB of disk and
+runs on CPU (no GPU needed for inference on small datasets).
+:::
+
+---
+
+## Data Source Settings
+
+Configure the target KOL and platform credentials. You need at least **one**
+platform configured to crawl content.
+
+### General
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `author_name` | string | `""` | Display name of the target KOL. Used in system prompts and shown in the UI. |
+
+### Zsxq / Knowledge Planet
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `zsxq_cookie` | string | `""` | Login cookie for Zsxq. Obtain from browser DevTools after logging in to `wx.zsxq.com`. |
+| `zsxq_group_id` | string | `""` | Numeric group (planet) ID. Found in the URL: `https://wx.zsxq.com/group/{id}`. |
+
+### Zhihu
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `zhihu_cookie` | string | `""` | Login cookie for Zhihu. Obtain from browser DevTools after logging in to `zhihu.com`. |
+| `zhihu_url_token` | string | `""` | User URL token (the slug in `https://www.zhihu.com/people/{token}`). |
+| `zhihu_sign_server` | string | `"http://localhost:17007"` | URL of the Zhihu signature server (Node.js helper for API request signing). |
+
+:::caution
+Cookies expire periodically. If crawls start returning empty results, re-log in
+to the platform and update the cookie value in `config.json`.
+:::
+
+---
+
+## Authentication & Security
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `admin_password` | string | `""` | Password for the admin login page. **Required** for admin access. |
+| `jwt_secret` | string | `"change-me-to-a-random-string"` | Secret key used to sign JWT tokens (HS256). **Must be changed** in production. |
+| `jwt_expire_hours` | int | `24` | Token validity period in hours. After expiry the admin must log in again. |
+| `public_chat_daily_limit` | int | `10` | Maximum number of Q&A queries allowed per day for public (unauthenticated) visitors, tracked by visitor fingerprint. |
 
 :::warning
-`jwt_secret` 在生产环境中必须更换为强随机字符串，否则存在安全风险。可使用以下命令生成：
+The default `jwt_secret` is intentionally insecure. Generate a strong random
+secret before deploying:
 
 ```bash
 python -c "import secrets; print(secrets.token_urlsafe(48))"
 ```
 :::
 
-### RAG 相关
+---
 
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `enable_bm25` | bool | `true` | 是否启用 BM25 混合检索。关闭后仅使用 Dense 向量检索 |
-| `chunk_size` | int | `500` | 文本切块大小（字符数） |
-| `chunk_overlap` | int | `80` | 相邻切块的重叠字符数 |
+## Crawling Schedule
 
-### 服务器相关
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `crawl_schedule` | string | `""` | Cron expression for scheduled crawling (e.g. `"0 3 * * *"` for daily at 3 AM). Mutually exclusive with `crawl_interval_minutes`. |
+| `crawl_interval_minutes` | int | `0` | Fixed interval in minutes between crawl runs. Set to `0` to disable. If both this and `crawl_schedule` are set, `crawl_schedule` takes precedence. |
 
-| 字段 | 类型 | 默认值 | 说明 |
-|------|------|--------|------|
-| `api_host` | string | `"0.0.0.0"` | 后端监听地址 |
-| `api_port` | int | `8000` | 后端监听端口 |
+:::note
+You can also manage the crawl schedule through the admin Settings UI or the
+`PUT /api/settings/crawl-interval` API endpoint at runtime.
+:::
 
-## 热更新机制
+---
 
-Dungeon Lord 的配置支持 **运行时热更新**，无需重启服务。热更新的工作流程如下：
+## RAG Settings
+
+These fields control the retrieval-augmented generation pipeline.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enable_bm25` | bool | `true` | Enable BM25 keyword retrieval alongside dense vector search. When `false`, only dense retrieval is used. |
+| `chunk_size` | int | `500` | Maximum number of characters per text chunk during ingestion. Larger chunks provide more context but reduce retrieval precision. |
+| `chunk_overlap` | int | `80` | Number of overlapping characters between adjacent chunks. Overlap helps preserve context that spans chunk boundaries. |
+
+:::tip
+If your KOL writes long-form articles, increasing `chunk_size` to 800-1000 may
+improve answer quality. For short posts (tweets/ideas), the default 500 works well.
+:::
+
+---
+
+## API Server Settings
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `api_host` | string | `"0.0.0.0"` | Network interface the backend listens on. Use `"0.0.0.0"` to accept connections from any host; use `"127.0.0.1"` for local-only access. |
+| `api_port` | int | `8000` | TCP port for the backend API server. |
+| `cors_origins` | list[string] | `["*"]` | Allowed CORS origins. Use `["*"]` to allow all (development); restrict to your domain in production (e.g. `["https://example.com"]`). |
+
+---
+
+## Tools & Integrations
+
+These fields enable optional LLM tool-calling capabilities.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `enable_tools` | bool | `true` | Allow the LLM to invoke external tools during answer generation. Currently supports Tavily web search and stock data lookup. |
+| `tavily_api_key` | string | `""` | API key for [Tavily](https://tavily.com/) web search. Required only if `enable_tools` is `true` and you want the LLM to search the web. |
+
+---
+
+## Miscellaneous
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `system_title` | string | `"大V观点分析"` | Title displayed in the frontend header and browser tab. |
+| `system_subtitle` | string | `"财经大V最新观点与 AI 智能问答"` | Subtitle displayed below the title on the dashboard. |
+| `professor_index_interval_days` | int | `7` | How often (in days) the professor index is rebuilt. |
+
+---
+
+## Computed Fields
+
+The following fields are **automatically derived** from the project root directory
+and cannot be configured manually:
+
+| Field | Computed Value | Description |
+|-------|---------------|-------------|
+| `database_url` | `sqlite:///{PROJECT_ROOT}/data/app.db` | SQLite database file path |
+| `chroma_persist_dir` | `{PROJECT_ROOT}/data/chroma` | ChromaDB persistence directory |
+
+---
+
+## Hot-Reload Mechanism
+
+Dungeon Lord's configuration singleton supports runtime hot-reload via a
+thread-safe update-and-save cycle:
 
 ```mermaid
 sequenceDiagram
-    participant Admin as 管理员
+    participant Admin as Admin
     participant API as Settings API
-    participant Settings as settings 单例
+    participant Settings as settings singleton
     participant Disk as config.json
 
     Admin->>API: PUT /api/settings/crawl-interval<br/>{"minutes": 60}
     API->>Settings: settings.update({"crawl_interval_minutes": 60})
-    Settings->>Settings: 加锁，合并更新内存数据
-    Settings->>Disk: 原子写入 config.json（先写 .tmp 再 rename）
-    Settings-->>API: 返回更新后的值
-    API-->>Admin: {"minutes": 60, "label": "每1小时"}
+    Settings->>Settings: Acquire lock, merge into memory
+    Settings->>Disk: Atomic write (tmp file -> rename)
+    Settings-->>API: Return updated value
+    API-->>Admin: {"minutes": 60, "label": "Every 1 hour"}
 ```
 
-### 热更新的关键代码
-
-配置管理的核心是一个全局单例 `_Settings`，内部使用 `threading.Lock` 保证线程安全：
-
-```python title="backend/app/config.py"
-class _Settings:
-    def __init__(self):
-        self._data: dict = {}
-        self._lock = Lock()
-        self.reload()  # 启动时从 config.json 加载
-
-    def __getattr__(self, key: str):
-        """读取配置：config.json > 计算字段 > 默认值"""
-        if key in self._data:
-            return self._data[key]
-        if key in _COMPUTED:
-            return _COMPUTED[key]
-        if key in _DEFAULTS:
-            return _DEFAULTS[key]
-        raise AttributeError(f"配置项不存在: {key}")
-
-    def update(self, patch: dict):
-        """合并更新并持久化到 config.json"""
-        with self._lock:
-            self._data.update(patch)
-            self._save()
-
-    def _save(self):
-        """原子写入：先写临时文件，再 rename"""
-        tmp = _CONFIG_PATH.with_suffix(".tmp")
-        tmp.write_text(json.dumps(self._data, ...), "utf-8")
-        tmp.replace(_CONFIG_PATH)  # 原子替换
-```
-
-### 通过 API 更新配置
-
-管理员可以通过 Settings API 实时更新配置。以下是使用 `curl` 的示例：
-
-```bash
-# 1. 先登录获取 JWT Token
-TOKEN=$(curl -s -X POST http://localhost:8000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"password": "your-admin-password"}' | jq -r '.token')
-
-# 2. 查看当前爬取间隔
-curl -s http://localhost:8000/api/settings/crawl-interval \
-  -H "Authorization: Bearer $TOKEN" | jq
-
-# 输出: {"minutes": 0, "label": "关闭"}
-
-# 3. 设置为每小时爬取一次
-curl -s -X PUT http://localhost:8000/api/settings/crawl-interval \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"minutes": 60}' | jq
-
-# 输出: {"minutes": 60, "label": "每1小时"}
-
-# 4. 查看调度器状态
-curl -s http://localhost:8000/api/settings/scheduler \
-  -H "Authorization: Bearer $TOKEN" | jq
-```
-
-### 在 Python 中调用
+### Reading Config in Python
 
 ```python
 from app.config import settings
 
-# 读取配置
+# Read any config value
 print(settings.openai_model)       # "gpt-4o"
 print(settings.enable_bm25)        # True
 print(settings.api_port)           # 8000
 
-# 热更新（写入内存 + 持久化到 config.json）
+# Hot-update (writes to memory + persists to config.json)
 settings.update({"chunk_size": 800, "chunk_overlap": 100})
 
-# 手动重新加载（从磁盘重新读取）
+# Force reload from disk
 settings.reload()
 ```
 
-## 敏感字段获取指南
+### Updating via the API
 
-### 知乎 Cookie
+```bash
+# 1. Log in and obtain a JWT token
+TOKEN=$(curl -s -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"password": "your-admin-password"}' | jq -r '.token')
 
-1. 在浏览器中登录 [知乎](https://www.zhihu.com)
-2. 打开开发者工具（F12） -> Network 标签
-3. 刷新页面，找到任意一个 `zhihu.com/api` 请求
-4. 在请求头中复制完整的 `Cookie` 值
-5. 粘贴到 `zhihu_cookie` 配置项
+# 2. View current crawl interval
+curl -s http://localhost:8000/api/settings/crawl-interval \
+  -H "Authorization: Bearer $TOKEN" | jq
+# Output: {"minutes": 0, "label": "Off"}
 
-### 知乎 URL Token
-
-知乎用户的 URL Token 就是个人主页 URL 中的标识符：
-
-```
-https://www.zhihu.com/people/zhang-san-88
-                          ^^^^^^^^^^^^^^^
-                          这就是 url_token
-```
-
-### 知识星球 Cookie
-
-1. 在浏览器中登录 [知识星球](https://wx.zsxq.com)
-2. 打开开发者工具（F12） -> Network 标签
-3. 找到任意一个 `api.zsxq.com` 请求
-4. 复制请求头中的 `Cookie` 值
-5. 粘贴到 `zsxq_cookie` 配置项
-
-### 知识星球 Group ID
-
-在浏览器中打开目标星球，URL 中的数字即为 Group ID：
-
-```
-https://wx.zsxq.com/group/1234567890
-                           ^^^^^^^^^^
-                           这就是 group_id
+# 3. Set crawl interval to every hour
+curl -s -X PUT http://localhost:8000/api/settings/crawl-interval \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"minutes": 60}' | jq
+# Output: {"minutes": 60, "label": "Every 1 hour"}
 ```
 
-### OpenAI API Key
+---
 
-1. 前往 [OpenAI Platform](https://platform.openai.com/api-keys)
-2. 创建新的 API Key
-3. 复制以 `sk-` 开头的密钥
-4. 粘贴到 `openai_api_key` 配置项
+## Full Example Configuration
 
-如果使用其他兼容服务（如 DeepSeek、Moonshot 等），同时需要修改 `openai_base_url` 为对应的服务地址。
+Below is a complete `config.json` with all fields populated:
 
-## 计算字段
+```json title="backend/config.json"
+{
+  "system_title": "KOL Analysis",
+  "system_subtitle": "Financial KOL opinions with AI-powered Q&A",
 
-以下字段由系统自动计算，**不需要手动配置**：
+  "openai_api_key": "sk-proj-xxxxxxxxxxxx",
+  "openai_base_url": "",
+  "openai_model": "gpt-4o",
+  "vision_model": "",
 
-| 字段 | 计算方式 | 说明 |
-|------|---------|------|
-| `database_url` | `sqlite:///{PROJECT_ROOT}/data/app.db` | SQLite 数据库路径 |
-| `chroma_persist_dir` | `{PROJECT_ROOT}/data/chroma` | ChromaDB 持久化目录 |
+  "embedding_provider": "openai",
+  "embedding_model": "text-embedding-3-small",
+  "hf_mirror_url": "https://hf-mirror.com",
 
-## 下一步
+  "author_name": "John Doe",
 
-配置完成后，请继续阅读 [首次运行](./first-run) 启动系统。
+  "zsxq_cookie": "",
+  "zsxq_group_id": "",
+
+  "zhihu_cookie": "z_c0=xxx; _zap=xxx; ...",
+  "zhihu_url_token": "john-doe-88",
+  "zhihu_sign_server": "http://localhost:17007",
+
+  "crawl_schedule": "0 3 * * *",
+  "crawl_interval_minutes": 0,
+
+  "admin_password": "my-secure-password",
+  "jwt_secret": "a-very-long-random-string-here",
+  "jwt_expire_hours": 24,
+  "public_chat_daily_limit": 10,
+
+  "enable_bm25": true,
+  "chunk_size": 500,
+  "chunk_overlap": 80,
+
+  "api_host": "0.0.0.0",
+  "api_port": 8000,
+  "cors_origins": ["*"],
+
+  "tavily_api_key": "",
+  "enable_tools": true,
+
+  "professor_index_interval_days": 7
+}
+```
+
+---
+
+## Next Steps
+
+Once your configuration is ready, proceed to the **[First Run](./first-run)** guide
+to start the system and perform your initial data crawl.

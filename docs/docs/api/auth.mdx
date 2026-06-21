@@ -1,36 +1,36 @@
 ---
 sidebar_position: 2
-title: Auth API
-description: 管理员认证接口 — 登录获取 JWT、验证 Token
-keywords: [认证, 登录, JWT, Token]
+title: Authentication
+description: Admin authentication API — login to obtain JWT, verify token, token format and security
+keywords: [authentication, login, JWT, token, security]
 ---
 
-# Auth API
+# Authentication
 
-管理员认证相关接口。无需预认证即可调用登录接口，验证接口需要携带有效的 JWT Token。
+The admin authentication endpoints handle login and token verification. The login endpoint requires no prior authentication; the check endpoint requires a valid JWT.
 
-**路由前缀：** `/api/auth`
+**Route prefix:** `/api/auth`
 
 ---
 
 ## POST /api/auth/login
 
-管理员登录，验证密码后签发 JWT Token。
+Authenticate as admin and receive a JWT token.
 
-### 请求
+### Request
 
 ```
 POST /api/auth/login
 Content-Type: application/json
 ```
 
-**请求体：**
+**Request Body:**
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `password` | `string` | 是 | 管理员密码（对应配置项 `admin_password`） |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `password` | `string` | Yes | Admin password (matches the `admin_password` config value) |
 
-**请求示例：**
+**Request Example:**
 
 ```json
 {
@@ -38,9 +38,9 @@ Content-Type: application/json
 }
 ```
 
-### 响应
+### Response
 
-**成功 (200)：**
+**Success (200):**
 
 ```json
 {
@@ -48,23 +48,23 @@ Content-Type: application/json
 }
 ```
 
-**错误 (401)：**
+**Error (401) -- Wrong Password:**
 
 ```json
 {
-  "detail": "密码错误"
+  "detail": "Incorrect password"
 }
 ```
 
-**错误 (500)：**
+**Error (500) -- Password Not Configured:**
 
 ```json
 {
-  "detail": "管理员密码未配置"
+  "detail": "Admin password not configured"
 }
 ```
 
-### curl 示例
+### curl Example
 
 ```bash
 curl -X POST http://localhost:8000/api/auth/login \
@@ -76,18 +76,18 @@ curl -X POST http://localhost:8000/api/auth/login \
 
 ## GET /api/auth/check
 
-验证当前持有的 JWT Token 是否有效。需要在请求头中携带 Token。
+Verify whether the current JWT token is valid. Requires the token in the `Authorization` header.
 
-### 请求
+### Request
 
 ```
 GET /api/auth/check
 Authorization: Bearer <token>
 ```
 
-### 响应
+### Response
 
-**成功 (200)：**
+**Success (200):**
 
 ```json
 {
@@ -95,23 +95,23 @@ Authorization: Bearer <token>
 }
 ```
 
-**错误 (401)：**
+**Error (401) -- Missing Token:**
 
 ```json
 {
-  "detail": "未登录"
+  "detail": "Not authenticated"
 }
 ```
 
-或
+**Error (401) -- Invalid or Expired Token:**
 
 ```json
 {
-  "detail": "Token 无效或已过期"
+  "detail": "Invalid or expired token"
 }
 ```
 
-### curl 示例
+### curl Example
 
 ```bash
 curl http://localhost:8000/api/auth/check \
@@ -120,14 +120,16 @@ curl http://localhost:8000/api/auth/check \
 
 ---
 
-## JWT Token 格式
+## JWT Token Format
 
-### 签名算法
+### Signing Algorithm
 
-- **算法：** HS256（HMAC-SHA256）
-- **密钥：** 配置项 `jwt_secret`（默认值 `change-me-to-a-random-string`，生产环境务必修改）
+| Property | Value |
+|----------|-------|
+| **Algorithm** | HS256 (HMAC-SHA256) |
+| **Secret Key** | Config value `jwt_secret` (default: `change-me-to-a-random-string`) |
 
-### Payload 结构
+### Payload Structure
 
 ```json
 {
@@ -136,19 +138,101 @@ curl http://localhost:8000/api/auth/check \
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `sub` | `string` | 固定为 `"admin"`，表示管理员身份 |
-| `exp` | `number` | 过期时间（Unix 时间戳） |
+| Field | Type | Description |
+|-------|------|-------------|
+| `sub` | `string` | Always `"admin"` -- identifies the admin principal |
+| `exp` | `number` | Expiration time as a Unix timestamp |
 
-### 过期时间
+### Token Lifetime
 
-由配置项 `jwt_expire_hours` 控制，默认 **24 小时**。Token 过期后需重新登录获取新 Token。
+Controlled by the `jwt_expire_hours` config value. Default: **24 hours**. Once expired, the client must re-authenticate via `POST /api/auth/login`.
 
-### 安全建议
+### Decoding a Token
 
-:::warning 生产环境安全
-1. 务必修改 `jwt_secret` 为高强度随机字符串（如 `openssl rand -hex 32` 的输出）
-2. 使用 HTTPS 传输 Token，防止中间人截获
-3. 合理设置 `jwt_expire_hours`，避免过长的有效期
+You can decode and inspect a JWT token without the secret (signature verification requires the secret):
+
+```bash
+# Decode the payload (base64)
+echo "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTcxOTUwMDAwMH0" \
+  | cut -d. -f2 \
+  | base64 -d 2>/dev/null || echo "base64 -d not available"
+```
+
+---
+
+## Token Storage (Frontend)
+
+The frontend stores the JWT token in the browser's `localStorage`:
+
+```javascript
+// After successful login
+localStorage.setItem('token', response.token);
+
+// On subsequent requests
+const token = localStorage.getItem('token');
+fetch('/api/auth/check', {
+  headers: { 'Authorization': `Bearer ${token}` }
+});
+
+// On logout
+localStorage.removeItem('token');
+```
+
+:::note
+`localStorage` persists across browser sessions but is accessible to any JavaScript running on the same origin. For higher security requirements, consider using `httpOnly` cookies instead.
 :::
+
+---
+
+## Error Handling
+
+### Common Authentication Errors
+
+| Scenario | HTTP Status | `detail` Message | Client Action |
+|----------|-------------|------------------|---------------|
+| No `Authorization` header | `401` | `Not authenticated` | Redirect to login |
+| Token has expired | `401` | `Invalid or expired token` | Refresh or re-login |
+| Token signature invalid | `401` | `Invalid or expired token` | Re-login |
+| Wrong password on login | `401` | `Incorrect password` | Show error, retry |
+| `admin_password` not set | `500` | `Admin password not configured` | Server-side config issue |
+
+### Frontend Token Refresh Pattern
+
+```mermaid
+flowchart TD
+    A[API Request] --> B{Token exists?}
+    B -->|No| C[Redirect to Login]
+    B -->|Yes| D[Send Request with Bearer Token]
+    D --> E{Response status?}
+    E -->|200| F[Success]
+    E -->|401| G{Retry count < 1?}
+    G -->|Yes| H[Redirect to Login]
+    G -->|No| I[Increment retry, re-login]
+    I --> D
+```
+
+---
+
+## Security Best Practices
+
+:::warning Production Security
+1. **Change `jwt_secret`** to a strong random string (e.g., output of `openssl rand -hex 32`)
+2. **Use HTTPS** to prevent token interception via man-in-the-middle attacks
+3. **Set a reasonable `jwt_expire_hours`** -- avoid excessively long token lifetimes
+4. **Rate-limit the login endpoint** to prevent brute-force password guessing
+:::
+
+### Generating a Secure JWT Secret
+
+```bash
+# Generate a 64-character hexadecimal random string
+openssl rand -hex 32
+```
+
+Set it in `config.json`:
+
+```json
+{
+  "jwt_secret": "a1b2c3d4e5f6...your-generated-secret..."
+}
+```

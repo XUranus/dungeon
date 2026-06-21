@@ -157,6 +157,80 @@ async def _describe_images(topic: Topic) -> str:
 
 # ──────────────────────────── 平台爬取 ────────────────────────────
 
+# 知识星球专栏 ID 映射（columns API 可能被限流，直接硬编码）
+ZSXQ_COLUMNS = {
+    "叫兽指数": 281251541211,
+    "萨尼铁塔的交易心得集锦": 518814124424,
+    "DeepVan的预言": 158522154552,
+    "DeepVan的宏观与金融学科普": 481844811828,
+    "简单易懂的金融类数据处理与编程": 481844545148,
+    "投资渠道": 481844811818,
+    "宏观快速上手和实战": 158428218122,
+}
+
+
+async def _ingest_column_articles(db: AsyncSession, crawler, group_id: str, platform: str) -> int:
+    """抓取知识星球专栏文章并入库，返回新增文章数"""
+    from app.crawlers.zsxq import ZsxqCrawler
+    assert isinstance(crawler, ZsxqCrawler)
+
+    # 尝试动态获取专栏列表，失败则用硬编码
+    columns = await crawler.crawl_columns(group_id)
+    if not columns:
+        logger.info("[zsxq] 专栏列表API不可用，使用硬编码专栏列表")
+        columns = [
+            {"column_id": cid, "name": name, "topics_count": 100}
+            for name, cid in ZSXQ_COLUMNS.items()
+        ]
+
+    total_saved = 0
+    for col in columns:
+        col_name = col["name"]
+        col_id = col["column_id"]
+        col_count = col.get("topics_count", 100)
+
+        if col_count == 0:
+            continue
+
+        logger.info("[zsxq] 抓取专栏: %s (column_id=%d, %d篇)", col_name, col_id, col_count)
+        articles = await crawler.crawl_column_articles(group_id, col_id, limit=col_count)
+
+        saved = 0
+        for ct in articles:
+            with db.no_autoflush:
+                existing = await db.execute(
+                    select(Topic.id).where(
+                        Topic.platform == platform,
+                        Topic.platform_topic_id == ct.platform_topic_id,
+                    ).limit(1)
+                )
+                if existing.first():
+                    continue
+
+            topic = Topic(
+                platform=platform,
+                platform_topic_id=ct.platform_topic_id,
+                title=ct.title,
+                content=ct.content,
+                content_type=ct.content_type,
+                url=ct.url,
+                like_count=ct.like_count,
+                comment_count=ct.comment_count,
+                images=ct.images or None,
+                raw_json=ct.raw_json,
+                published_at=ct.published_at,
+            )
+            db.add(topic)
+            await db.flush()
+            saved += 1
+
+        total_saved += saved
+        logger.info("[zsxq] 专栏 %s: 新增 %d 篇", col_name, saved)
+
+    await db.commit()
+    return total_saved
+
+
 async def ingest_platform(db: AsyncSession, platform: str, progress_callback=None, full_crawl: bool = False) -> CrawlTask:
     """采集指定平台的数据。full_crawl=True 时跳过增量逻辑，从头爬取。"""
     task = CrawlTask(
@@ -292,6 +366,18 @@ async def ingest_platform(db: AsyncSession, platform: str, progress_callback=Non
             f"[{platform}] 入库完成: 主题新增{topics_count}条(去重{topics_dup}), "
             f"评论新增{comments_count}条(去重{comments_dup}, 失败{comments_err})"
         )
+
+        # ── 知识星球: 抓取专栏文章 ──
+        if platform == "zsxq":
+            try:
+                from app.crawlers.zsxq import ZsxqCrawler
+                if isinstance(crawler, ZsxqCrawler):
+                    article_count = await _ingest_column_articles(db, crawler, url_token, platform)
+                    topics_count += article_count
+                    logger.info(f"[zsxq] 专栏文章入库: 新增{article_count}篇")
+            except Exception as e:
+                logger.warning(f"[zsxq] 专栏文章抓取失败(不影响主流程): {e}")
+
         if progress_callback:
             progress_callback(phase="done", topics_saved=topics_count, comments_saved=comments_count)
 

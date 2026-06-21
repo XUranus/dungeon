@@ -1,68 +1,79 @@
 ---
 sidebar_position: 4
-title: "后端架构"
-description: "FastAPI + SQLAlchemy + ChromaDB 后端架构详解"
+title: "Backend Architecture"
+description: "FastAPI + SQLAlchemy + ChromaDB backend architecture deep dive"
 ---
 
-# 后端架构
+# Backend Architecture
 
-## 技术栈
+## Technology Stack
 
-| 技术 | 版本 | 用途 |
-|------|------|------|
-| FastAPI | - | 异步 Web 框架，自动 OpenAPI 文档 |
-| SQLAlchemy 2 | async | ORM，async session + aiosqlite 驱动 |
-| ChromaDB | - | 向量数据库，持久化 HNSW 索引 |
-| APScheduler | - | 定时任务调度（Cron + Interval） |
-| python-jose | - | JWT 签发与验证（HS256） |
-| httpx | - | 异步 HTTP 客户端（爬虫） |
-| openai | - | OpenAI API Python SDK |
-| rank-bm25 | - | BM25 稀疏检索算法 |
-| sentence-transformers | - | 本地 Embedding 模型推理 |
+| Technology | Purpose |
+|-----------|---------|
+| FastAPI | Async Python web framework with automatic OpenAPI documentation |
+| SQLAlchemy 2 (async) | ORM with async session and `aiosqlite` driver |
+| ChromaDB | Vector database with persistent HNSW index |
+| APScheduler | Task scheduling (Cron + Interval triggers via `AsyncIOScheduler`) |
+| python-jose | JWT issuance and verification (HS256) |
+| httpx | Async HTTP client for platform crawlers |
+| openai | OpenAI-compatible API Python SDK |
+| rank-bm25 | BM25Okapi sparse retrieval algorithm |
+| sentence-transformers | Local embedding model inference (`bge-small-zh-v1.5`) |
+| yfinance | Stock quote retrieval for LLM tool-calling |
+| tavily-python | Web search for LLM tool-calling |
 
-## 模块结构
+## Module Organization
 
 ```mermaid
 graph TB
-    subgraph Entry ["入口层"]
+    subgraph Entry ["Entry Point"]
         Main["main.py<br/>FastAPI app + lifespan"]
     end
 
-    subgraph Routers ["路由层 (routers/)"]
+    subgraph Routers ["Route Layer (routers/)"]
         AuthR["auth.py<br/>/api/auth"]
         ChatR["chat.py<br/>/api/chat"]
         DashR["dashboard.py<br/>/api/dashboard"]
         TopicsR["topics.py<br/>/api/topics"]
         SourcesR["sources.py<br/>/api/sources"]
         SettingsR["settings.py<br/>/api/settings"]
+        HoldingsR["holdings.py<br/>/api/holdings"]
+        ProfR["professor_index.py<br/>/api/professor-index"]
         ProxyR["proxy.py<br/>/api/proxy"]
     end
 
-    subgraph Services ["服务层 (services/)"]
-        RAG["rag.py<br/>RAG 引擎"]
-        Hybrid["hybrid_retriever.py<br/>混合检索"]
-        Embed["embedding.py<br/>向量化"]
-        VecStore["vectorstore.py<br/>ChromaDB 封装"]
-        Ingest["ingestion.py<br/>采集 + 入库"]
-        TaskMgr["task_manager.py<br/>后台任务"]
+    subgraph Services ["Service Layer (services/)"]
+        RAG["rag.py<br/>RAG Engine"]
+        Hybrid["hybrid_retriever.py<br/>Hybrid Retrieval"]
+        Embed["embedding.py<br/>Vectorization"]
+        VecStore["vectorstore.py<br/>ChromaDB Wrapper"]
+        Ingest["ingestion.py<br/>Crawl + Store"]
+        ProfIndex["professor_index.py<br/>Professor Index Parser"]
+        Holdings["holdings_generator.py<br/>Holdings Generator"]
+        ToolsSvc["tools.py<br/>Web Search + Stock"]
+        LLMClient["llm_client.py<br/>OpenAI Client"]
+        TaskMgr["task_manager.py<br/>Background Tasks"]
+        AuditSvc["audit.py<br/>Audit Logging"]
     end
 
-    subgraph Crawlers ["爬虫层 (crawlers/)"]
+    subgraph Crawlers ["Crawler Layer (crawlers/)"]
         Base["base.py<br/>BaseCrawler ABC"]
-        ZSXQ["zsxq.py<br/>知识星球"]
-        Zhihu["zhihu.py<br/>知乎"]
+        ZSXQ["zsxq.py<br/>Zsxq"]
+        Zhihu["zhihu.py<br/>Zhihu"]
     end
 
-    subgraph Utils ["工具层 (utils/)"]
-        Text["text.py<br/>文本切分"]
+    subgraph Utils ["Utility Layer (utils/)"]
+        Text["text.py<br/>Text Chunking"]
         Sched["scheduler.py<br/>APScheduler"]
+        Stream["streaming.py<br/>SSE Helpers"]
     end
 
-    subgraph Core ["核心模块"]
-        Config["config.py<br/>配置管理"]
-        DB["database.py<br/>SQLAlchemy engine"]
-        Models["models.py<br/>ORM 模型"]
-        Auth["auth.py<br/>JWT 认证"]
+    subgraph Core ["Core Modules"]
+        Config["config.py<br/>Configuration"]
+        DB["database.py<br/>SQLAlchemy Engine"]
+        Models["models.py<br/>ORM Models"]
+        Auth["auth.py<br/>JWT Auth"]
+        Schemas["schemas.py<br/>Pydantic Schemas"]
     end
 
     Main --> Routers
@@ -76,173 +87,328 @@ graph TB
     RAG --> Embed
     RAG --> VecStore
     RAG --> Hybrid
+    RAG --> ToolsSvc
+    RAG --> LLMClient
     Hybrid --> VecStore
     Ingest --> Embed
     Ingest --> VecStore
     Ingest --> Crawlers
     Ingest --> Text
     Ingest --> Models
+    ProfIndex --> Ingest
+    ProfIndex --> LLMClient
 
     Sched --> Ingest
+    Sched --> ProfIndex
 
     Services --> Config
     Services --> DB
     Crawlers --> Config
 ```
 
-## 关键服务详解
+## Application Lifecycle
 
-### rag.py — RAG 引擎
-
-RAG 引擎是系统的核心问答服务，实现检索增强生成的完整流程。
-
-**核心函数**：`rag_query_stream(question, filters, top_k, history)`
-
-**处理流程**：
-
-1. 对用户问题进行 Embedding
-2. 并行执行 Dense 向量检索和 BM25 稀疏检索
-3. 使用 RRF 融合排序合并两路结果
-4. 构建带元数据标注的上下文
-5. 注入系统提示词 + 多轮对话历史
-6. 调用 LLM 流式生成回答
-
-**系统提示词**：
+The FastAPI application uses an `asynccontextmanager` lifespan to manage startup and shutdown sequences (`backend/app/main.py`):
 
 ```python
-SYSTEM_PROMPT = f"""你是一个财经观点分析助手。你的任务是根据{settings.author_name or '星主'}在知乎和
-知识星球上的真实发言记录，回答用户的问题。
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger = logging.getLogger(__name__)
 
-规则:
-1. 只基于提供的参考资料回答，不要编造信息
-2. 如果参考资料不足以回答问题，明确说明
-3. 回答中引用原文时，用markdown链接标注来源
-4. 如果参考资料中提供了原文链接(URL)，必须在引用时附上该链接
-5. 回答要简洁、有条理，使用markdown格式
-6. 支持多轮对话，结合上下文理解用户意图
-7. 优先使用编号靠前的参考资料（相关性更高）
-8. 当问题涉及"推荐""列举"时，务必汇总所有相关片段"""
+    # Security checks
+    if settings.jwt_secret == "change-me-to-a-random-string":
+        logger.warning("jwt_secret uses default value -- set a random key in config.json!")
+    if not settings.admin_password:
+        logger.warning("admin_password is not configured")
+
+    await init_db()                          # 1. Create SQLite tables
+
+    if settings.embedding_provider == "local":  # 2. Check local embedding model
+        from app.services.embedding import ensure_local_model
+        if not ensure_local_model():
+            logger.warning("Local embedding model unavailable")
+
+    setup_scheduler()                        # 3. Start task scheduler
+
+    if settings.enable_bm25:                 # 4. Build BM25 index
+        from app.services.hybrid_retriever import build_bm25_index
+        build_bm25_index()
+
+    yield                                    # === Application running ===
+
+    shutdown_scheduler()                     # Stop scheduler
 ```
 
-**LLM 配置**：
+**Startup sequence**:
+
+1. **Database initialization**: Creates all ORM tables via SQLAlchemy `create_all`
+2. **Embedding model pre-check**: In local mode, ensures `bge-small-zh-v1.5` is downloaded
+3. **Scheduler startup**: Registers cron/interval tasks based on configuration
+4. **BM25 index build**: Loads all documents from ChromaDB into an in-memory BM25Okapi index
+
+## Router Structure
+
+All routers are registered in `main.py` with their respective prefixes and tags:
+
+```python
+app.include_router(auth.router)              # /api/auth
+app.include_router(dashboard.router)         # /api/dashboard
+app.include_router(chat.router)              # /api/chat
+app.include_router(topics.router)            # /api/topics
+app.include_router(sources.router)           # /api/sources
+app.include_router(settings_router.router)   # /api/settings
+app.include_router(settings_router.public_router)  # /api/settings (public)
+app.include_router(holdings.router)          # /api/holdings
+app.include_router(professor_index.router)   # /api/professor-index
+app.include_router(professor_index.public_router)  # /api/professor-index (public)
+app.include_router(proxy.router)             # /api/proxy
+```
+
+| Router | Prefix | Auth | Key Endpoints |
+|--------|--------|------|---------------|
+| `auth.py` | `/api/auth` | None | `POST /login`, `GET /check` |
+| `chat.py` | `/api/chat` | Required | `POST /` (SSE streaming RAG Q&A) |
+| `dashboard.py` | `/api/dashboard` | Optional | `GET /summary`, `POST /chat`, `GET /chat-remaining`, `GET /holdings`, `GET /professor-index` |
+| `topics.py` | `/api/topics` | Required | `GET /` (paginated), `GET /{id}/comments` |
+| `sources.py` | `/api/sources` | Required | `GET /platforms`, `POST /crawl`, `POST /crawl/async`, `GET /crawl/status`, `GET /tasks` |
+| `settings.py` | `/api/settings` | Mixed | `GET/PUT /crawl-interval`, `GET/PUT /system-info`, `GET/PUT /tools`, `GET/PUT /log-level` |
+| `holdings.py` | `/api/holdings` | Required | `GET /`, `POST /generate`, `DELETE /{id}` |
+| `professor_index.py` | `/api/professor-index` | Mixed | `POST /parse`, `GET /parse/status`, `GET /parse/history`, `GET/PUT /interval` |
+| `proxy.py` | `/api/proxy` | None | `GET /image?url=` |
+
+## Service Layer
+
+### rag.py -- RAG Engine
+
+The RAG engine is the core Q&A service implementing the complete retrieval-augmented generation flow.
+
+**Core function**: `rag_query_stream(question, filters, top_k, history)`
+
+**Processing flow**:
+
+1. Embed the user question
+2. Execute dense vector retrieval and BM25 sparse retrieval in parallel
+3. Merge results via weighted RRF (Reciprocal Rank Fusion)
+4. Build context with metadata annotations
+5. Inject system prompt + multi-turn conversation history (last 12 messages)
+6. Call LLM with streaming enabled
+
+**System prompt**:
+
+```python
+SYSTEM_PROMPT = f"""You are a financial opinion analysis assistant. Your task is to answer
+user questions based on the authentic发言 records of {settings.author_name} on Zhihu and Zsxq.
+
+Rules:
+1. Answer only based on provided references -- do not fabricate information
+2. If references are insufficient, state so explicitly
+3. Cite sources with markdown links when referencing original text
+4. Attach source URLs when available in references
+5. Keep answers concise and well-organized using markdown format
+6. Support multi-turn dialogue with context awareness
+7. Prioritize higher-ranked references (greater relevance)
+8. When questions involve "recommendations" or "lists", aggregate all relevant snippets"""
+```
+
+**LLM configuration**:
 
 ```python
 response = await client.chat.completions.create(
-    model=settings.openai_model,    # 默认 gpt-4o
+    model=settings.openai_model,    # Default: gpt-4o
     messages=messages,
-    temperature=0.3,                # 低温度保证回答稳定性
-    stream=True,                    # 流式生成
+    temperature=0.3,                # Low temperature for stable answers
+    stream=True,                    # Streaming generation
 )
 ```
 
-### embedding.py — 向量化服务
+### hybrid_retriever.py -- Hybrid Retrieval
 
-支持双模式 Embedding：OpenAI API 和本地 bge-small-zh-v1.5。
+Implements dual-path retrieval (Dense + BM25) with RRF fusion ranking.
 
-**模型管理**：
+**BM25 index management**:
+
+- Built at startup from all documents in ChromaDB
+- Rebuilt (full) when new content is ingested
+- Tokenizer supports mixed Chinese/English: English words + Chinese unigram/bigram/trigram + numbers
+
+**RRF fusion parameters**:
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `k` | 60 (query) / 30 (build) | RRF smoothing parameter |
+| `dense_weight` | 1.5 | Dense retrieval weight |
+| `bm25_weight` | 1.0 | BM25 retrieval weight |
+| `top_k` | 12 (final) | Final result count |
+
+**RRF formula**: `score(doc) = dense_weight / (k + dense_rank + 1) + bm25_weight / (k + bm25_rank + 1)`
+
+### embedding.py -- Vectorization Service
+
+Supports dual-mode embedding, switchable via the `embedding_provider` configuration:
+
+| Provider | Model | Batch Size | Pros | Cons |
+|----------|-------|------------|------|------|
+| `openai` | `text-embedding-3-small` | 512 | High quality, no local resources | Requires API key, network latency |
+| `local` | `bge-small-zh-v1.5` (512-dim) | 64 | No network dependency, Chinese-optimized | First-run model download (~100MB) |
+
+**Model management**:
 
 ```python
 LOCAL_MODEL_ID = "BAAI/bge-small-zh-v1.5"
 
 def ensure_local_model() -> bool:
-    """启动时检查本地模型，不存在则下载"""
+    """Check local model on startup; download if missing."""
     from huggingface_hub import snapshot_download
-    # 1. 先检查本地缓存 (local_files_only=True)
-    # 2. 缓存不存在则从 HF Mirror 下载
-    # 3. 设置 HF_ENDPOINT 使用国内镜像
+    # 1. Check local cache (local_files_only=True)
+    # 2. If missing, download from HF Mirror (hf_mirror_url)
+    # 3. Set HF_ENDPOINT for domestic mirror
 ```
 
-**API 设计**：
+### vectorstore.py -- ChromaDB Wrapper
 
-| 函数 | 说明 |
-|------|------|
-| `get_embedding(text)` | 单条文本向量化，返回 `list[float]` |
-| `get_embeddings(texts)` | 批量向量化，本地模式 batch_size=64，OpenAI 模式 batch_size=512 |
+A thin wrapper around ChromaDB providing a unified vector storage interface.
 
-### vectorstore.py — ChromaDB 封装
-
-对 ChromaDB 的薄封装层，提供统一的向量存储接口。
-
-**集合配置**：
+**Collection configuration**:
 
 ```python
 COLLECTION_NAME = "kol_opinions"
-# HNSW cosine 空间，适合归一化后的向量
 client.get_or_create_collection(
     name=COLLECTION_NAME,
     metadata={"hnsw:space": "cosine"},
 )
 ```
 
-**API 方法**：
+**API methods**:
 
-| 函数 | 说明 |
-|------|------|
-| `add_documents(ids, documents, embeddings, metadatas)` | 添加文档 |
-| `query(query_embedding, n_results, where)` | 向量检索，支持 metadata 过滤 |
-| `delete_by_source(source_type, source_id)` | 按来源删除 chunk |
-| `get_all_documents()` | 获取所有文档（用于 BM25 索引构建） |
+| Function | Description |
+|----------|-------------|
+| `add_documents(ids, documents, embeddings, metadatas)` | Add documents to the collection |
+| `query(query_embedding, n_results, where)` | Vector search with optional metadata filtering |
+| `delete_by_source(source_type, source_id)` | Delete chunks by source reference |
+| `get_all_documents()` | Retrieve all documents (for BM25 index construction) |
 
-### ingestion.py — 数据采集入库
+### ingestion.py -- Data Ingestion
 
-数据采集服务是连接爬虫和存储的桥梁，负责完整的「爬取 -> 预处理 -> 切分 -> 向量化 -> 入库」流水线。
+The ingestion service bridges crawlers and storage, orchestrating the complete "crawl -> preprocess -> chunk -> vectorize -> store" pipeline.
 
-**入口函数**：
+**Entry functions**:
 
 ```python
 async def ingest_platform(db, platform, progress_callback, full_crawl) -> CrawlTask
 async def ingest_all(db) -> list[CrawlTask]
 ```
 
-**完整流程**：
+### professor_index.py -- Professor Index Parser
 
-```mermaid
-flowchart TB
-    Start["ingest_platform(platform)"] --> CreateTask["创建 CrawlTask<br/>status='running'"]
-    CreateTask --> IncrCheck{"增量/全量?"}
-    IncrCheck -->|"增量"| QueryLast["查询最新 published_at"]
-    IncrCheck -->|"全量"| SinceNone["since = None"]
+Parses Professor Index screenshots from Zsxq articles using multimodal LLM capabilities:
 
-    QueryLast --> Crawl["crawler.crawl_topics(url_token, since)"]
-    SinceNone --> Crawl
+1. Fetches recent articles from the configured Zsxq group
+2. Extracts images from articles containing index screenshots
+3. Sends images to a vision-capable LLM for structured data extraction
+4. Stores parsed holdings as `ProfessorIndexSnapshot` and `ProfessorIndexHolding` records
+5. Supports both "China" and "Global" index versions
 
-    Crawl --> SaveTopics["逐条保存 Topic 到 SQLite<br/>(去重: platform + platform_topic_id)"]
-    SaveTopics --> SaveComments["保存 Comment 到 SQLite<br/>(去重: platform + platform_comment_id)"]
-    SaveComments --> EmbedNew["_embed_new_content()"]
+### tools.py -- LLM Tool-Calling
 
-    EmbedNew --> Preprocess["预处理文本<br/>(_preprocess_content)"]
-    Preprocess --> ImgDesc["图片描述<br/>(_describe_images)"]
-    ImgDesc --> Chunk["切分 chunk<br/>(split_text_to_chunks)"]
-    Chunk --> GetEmb["批量 Embedding<br/>(get_embeddings)"]
-    GetEmb --> ChromaAdd["写入 ChromaDB<br/>(add_documents)"]
-    ChromaAdd --> BM25Update["更新 BM25 索引<br/>(add_to_bm25_index)"]
-    BM25Update --> Done["CrawlTask.status = 'done'"]
+Provides external tools that the LLM can invoke during RAG Q&A:
+
+| Tool | Description | Source |
+|------|-------------|--------|
+| `web_search(query)` | Real-time web search | Tavily API |
+| `get_stock_quote(symbol)` | Individual stock price and metadata | yfinance |
+| `get_market_overview()` | Major index summary | yfinance |
+
+### llm_client.py -- LLM Client
+
+Manages the OpenAI-compatible API client with support for:
+
+- Custom base URL (for compatible endpoints)
+- Configurable model selection
+- Streaming and non-streaming completions
+- Tool-calling function definitions
+
+## Configuration System
+
+### Hot-Reload Singleton
+
+Configuration is managed via `config.json` with a thread-safe singleton pattern (`backend/app/config.py`):
+
+```python
+class _Settings:
+    """Configuration singleton with save/reload hot-reload support."""
+
+    def __getattr__(self, key: str):
+        # 1. Value from config.json
+        if key in self._data:
+            return self._data[key]
+        # 2. Computed fields (database_url, chroma_persist_dir)
+        if key in _COMPUTED:
+            return _COMPUTED[key]
+        # 3. Built-in defaults
+        if key in _DEFAULTS:
+            return _DEFAULTS[key]
+        raise AttributeError(f"Unknown config key: {key}")
 ```
 
-### hybrid_retriever.py — 混合检索
+**Priority**: `config.json` values > computed fields > `_DEFAULTS` built-in defaults
 
-实现 Dense + BM25 双路检索与 RRF 融合排序。
+**Key configuration items**:
 
-**BM25 索引管理**：
+| Config Key | Default | Description |
+|-----------|---------|-------------|
+| `openai_api_key` | `""` | OpenAI API key |
+| `openai_base_url` | `""` | Custom API endpoint (compatible interface) |
+| `openai_model` | `"gpt-4o"` | LLM model for Q&A |
+| `embedding_provider` | `"openai"` | Embedding provider: `openai` / `local` |
+| `embedding_model` | `"text-embedding-3-small"` | OpenAI embedding model |
+| `admin_password` | `""` | Admin login password |
+| `jwt_secret` | `"change-me-..."` | JWT signing secret |
+| `jwt_expire_hours` | `24` | Token validity period (hours) |
+| `public_chat_daily_limit` | `10` | Public Q&A daily IP quota |
+| `chunk_size` | `500` | Text chunk max size (characters) |
+| `chunk_overlap` | `80` | Chunk overlap length |
+| `enable_bm25` | `true` | Enable BM25 hybrid retrieval |
+| `vision_model` | `""` | Image description model (empty = skip) |
+| `enable_tools` | `true` | Enable LLM tool-calling |
+| `tavily_api_key` | `""` | Tavily search API key |
+| `crawl_schedule` | `""` | Daily crawl time (HH:MM) |
+| `crawl_interval_minutes` | `0` | Interval crawl minutes (0 = disabled) |
+| `professor_index_interval_days` | `7` | Professor Index auto-parse interval |
+| `zsxq_cookie` | `""` | Zsxq authentication cookie |
+| `zhihu_cookie` | `""` | Zhihu authentication cookie |
+| `author_name` | `""` | Target author name |
+| `cors_origins` | `["*"]` | Allowed CORS origins |
 
-- 启动时从 ChromaDB 加载所有文档构建内存索引
-- 新内容入库后增量更新（全量重建）
-- 分词器支持中英文混合：英文单词 + 中文 unigram/bigram/trigram + 数字
+## Database Setup
 
-**RRF 融合参数**：
+The system uses SQLAlchemy 2 with async sessions and the `aiosqlite` driver (`backend/app/database.py`):
 
-| 参数 | 值 | 说明 |
-|------|----|------|
-| `k` | 60 (查询时) / 30 (构建时) | RRF 平滑参数 |
-| `dense_weight` | 1.5 | Dense 检索权重 |
-| `bm25_weight` | 1.0 | BM25 检索权重 |
-| `top_k` | 12 (最终返回) | 最终结果数量 |
+```python
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.orm import DeclarativeBase
 
-## 认证系统
+engine = create_async_engine(settings.database_url, echo=False)
+async_session = async_sessionmaker(engine, expire_on_commit=False)
 
-### JWT 实现
+class Base(DeclarativeBase):
+    pass
 
-JWT 认证基于 `python-jose` 库，使用 HS256 算法（`backend/app/auth.py`）：
+async def init_db():
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+async def get_db():
+    async with async_session() as session:
+        yield session
+```
+
+**Database file location**: `data/app.db` (auto-derived from project root)
+
+## Authentication Flow
+
+### JWT Implementation
+
+JWT authentication uses the `python-jose` library with HS256 algorithm (`backend/app/auth.py`):
 
 ```python
 ALGORITHM = "HS256"
@@ -260,25 +426,25 @@ def verify_token(token: str) -> bool:
         return False
 ```
 
-### FastAPI 依赖注入
+### FastAPI Dependency Injection
 
-系统提供两个认证依赖，通过 FastAPI 的 `Depends` 机制注入到路由中：
+Two authentication dependencies are provided via FastAPI's `Depends` mechanism:
 
 ```python
 async def get_current_admin(
     cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> str:
-    """强制认证：无 token 或 token 无效时返回 401"""
+    """Mandatory auth: returns 401 if token is missing or invalid."""
     if cred is None:
-        raise HTTPException(status_code=401, detail="未登录")
+        raise HTTPException(status_code=401, detail="Not logged in")
     if not verify_token(cred.credentials):
-        raise HTTPException(status_code=401, detail="Token 无效或已过期")
+        raise HTTPException(status_code=401, detail="Token invalid or expired")
     return "admin"
 
 async def optional_admin(
     cred: HTTPAuthorizationCredentials | None = Depends(_bearer),
 ) -> str | None:
-    """可选认证：有 token 返回 admin，无 token 返回 None"""
+    """Optional auth: returns "admin" if valid token, None otherwise."""
     if cred is None:
         return None
     if verify_token(cred.credentials):
@@ -286,22 +452,22 @@ async def optional_admin(
     return None
 ```
 
-**路由使用模式**：
+**Usage patterns**:
 
 ```python
-# 方式一：路由级强制认证（整个 router 的所有端点都需要认证）
+# Pattern 1: Router-level mandatory auth (all endpoints require auth)
 router = APIRouter(
     prefix="/api/chat",
     dependencies=[Depends(get_current_admin)],
 )
 
-# 方式二：端点级可选认证
+# Pattern 2: Endpoint-level optional auth
 @router.get("/summary")
 async def dashboard_summary(admin: str | None = Depends(optional_admin)):
-    # admin 可能为 None（公共访客）或 "admin"
+    # admin is either None (public visitor) or "admin"
 ```
 
-### 登录流程
+### Login Sequence
 
 ```mermaid
 sequenceDiagram
@@ -312,30 +478,30 @@ sequenceDiagram
 
     Client->>AuthRouter: POST /api/auth/login {password}
     AuthRouter->>Config: settings.admin_password
-    AuthRouter->>AuthRouter: 验证密码
+    AuthRouter->>AuthRouter: Verify password
 
-    alt 密码错误
+    alt Password incorrect
         AuthRouter-->>Client: 401 Unauthorized
-    else 密码正确
+    else Password correct
         AuthRouter->>JWT: create_token()
         JWT-->>AuthRouter: "eyJhbGci..."
         AuthRouter-->>Client: {token: "eyJhbGci..."}
     end
 ```
 
-## 任务调度
+## Task Scheduler
 
-### APScheduler 配置
+### APScheduler Configuration
 
-系统使用 APScheduler 的 `AsyncIOScheduler` 支持两种定时策略（`backend/app/utils/scheduler.py`）：
+The system uses APScheduler's `AsyncIOScheduler` with two scheduling strategies (`backend/app/utils/scheduler.py`):
 
 ```mermaid
 flowchart LR
-    Config["config.json"] --> Check1{"crawl_schedule<br/>非空?"}
+    Config["config.json"] --> Check1{"crawl_schedule<br/>non-empty?"}
     Config --> Check2{"crawl_interval_minutes<br/>> 0?"}
 
-    Check1 -->|"是"| CronJob["CronTrigger<br/>每日 HH:MM 执行"]
-    Check2 -->|"是"| IntervalJob["IntervalTrigger<br/>每 N 分钟执行"]
+    Check1 -->|"Yes"| CronJob["CronTrigger<br/>Daily at HH:MM"]
+    Check2 -->|"Yes"| IntervalJob["IntervalTrigger<br/>Every N minutes"]
 
     CronJob --> Scheduler["AsyncIOScheduler"]
     IntervalJob --> Scheduler
@@ -344,63 +510,98 @@ flowchart LR
     Crawl --> IngestAll["ingest_all(db)"]
 ```
 
-| 模式 | 配置项 | 触发器 | 说明 |
-|------|--------|--------|------|
-| 每日定时 | `crawl_schedule` (如 "08:30") | CronTrigger | 每天指定时间执行一次 |
-| 间隔循环 | `crawl_interval_minutes` (如 60) | IntervalTrigger | 每 N 分钟执行一次 |
+| Mode | Config Key | Trigger | Description |
+|------|-----------|---------|-------------|
+| Daily fixed time | `crawl_schedule` (e.g. `"08:30"`) | `CronTrigger` | Runs once per day at the specified time |
+| Interval loop | `crawl_interval_minutes` (e.g. `60`) | `IntervalTrigger` | Runs every N minutes |
 
-**热更新**：间隔爬取支持运行时热更新，无需重启服务：
+**Hot-reload**: The interval schedule supports runtime updates without restarting the service:
 
 ```python
 def apply_crawl_interval(minutes: int):
-    """热更新间隔爬取配置（settings 已持久化后调用）"""
+    """Hot-reload crawl interval configuration (called after settings persist)."""
     _rebuild_interval_job(minutes)
     if minutes > 0 and not scheduler.running:
         scheduler.start()
 ```
 
-## 配置管理
+## Middleware
 
-### 热更新配置系统
+### CORS
 
-配置通过 `config.json` 管理，支持运行时读写（`backend/app/config.py`）：
+Cross-Origin Resource Sharing is configured via FastAPI's `CORSMiddleware`:
 
 ```python
-class _Settings:
-    """配置单例，支持 save/reload 热更新"""
-
-    def __getattr__(self, key: str):
-        # 1. config.json 中的值
-        # 2. 计算字段（database_url, chroma_persist_dir）
-        # 3. 默认值
+_cors_origins = settings.cors_origins  # Default: ["*"]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins,
+    allow_credentials="*" not in _cors_origins,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 ```
 
-**配置优先级**：`config.json` > 计算字段 > `_DEFAULTS` 内置默认值
+:::warning
+When `cors_origins` is set to `["*"]`, `allow_credentials` is automatically disabled (per CORS specification). To enable credentials (cookies/auth headers), specify explicit origin URLs instead of the wildcard.
+:::
 
-**关键配置项**：
+## Error Handling Patterns
 
-| 配置项 | 默认值 | 说明 |
-|--------|--------|------|
-| `openai_api_key` | "" | OpenAI API Key |
-| `openai_base_url` | "" | 自定义 API 端点（兼容接口） |
-| `openai_model` | "gpt-4o" | 问答使用的 LLM 模型 |
-| `embedding_provider` | "openai" | Embedding 提供者：openai / local |
-| `embedding_model` | "text-embedding-3-small" | OpenAI Embedding 模型 |
-| `admin_password` | "" | 管理员密码 |
-| `jwt_secret` | "change-me-..." | JWT 签名密钥 |
-| `jwt_expire_hours` | 24 | Token 有效期（小时） |
-| `public_chat_daily_limit` | 10 | 公共问答每日 IP 限额 |
-| `chunk_size` | 500 | 文本切分 chunk 大小 |
-| `chunk_overlap` | 80 | chunk 重叠长度 |
-| `enable_bm25` | True | 是否启用 BM25 混合检索 |
-| `vision_model` | "" | 图片描述模型（留空则跳过） |
-| `crawl_schedule` | "" | 每日定时爬取时间 (HH:MM) |
-| `crawl_interval_minutes` | 0 | 间隔爬取分钟数（0=关闭） |
-| `zsxq_cookie` | "" | 知识星球认证 Cookie |
-| `zhihu_cookie` | "" | 知乎认证 Cookie |
-| `author_name` | "" | 目标作者名称 |
+The backend follows consistent error handling conventions:
 
-## 模块关系图
+### HTTP Exceptions
+
+Standard HTTP errors use FastAPI's `HTTPException`:
+
+```python
+from fastapi import HTTPException
+
+# 401 Unauthorized
+raise HTTPException(status_code=401, detail="Not logged in")
+
+# 404 Not Found
+raise HTTPException(status_code=404, detail="Topic not found")
+
+# 429 Too Many Requests
+raise HTTPException(status_code=429, detail="Daily limit exceeded")
+
+# 500 Internal Server Error
+raise HTTPException(status_code=500, detail="Crawl task failed")
+```
+
+### Background Task Error Handling
+
+Background tasks (crawl, professor index parsing) capture errors in their corresponding task records:
+
+```python
+try:
+    # ... crawl logic ...
+    task.status = "done"
+except Exception as e:
+    task.status = "error"
+    task.error_message = str(e)[:2000]  # Truncate long error messages
+finally:
+    task.finished_at = datetime.now(timezone.utc)
+    await db.commit()
+```
+
+### SSE Error Streaming
+
+For SSE endpoints, errors are communicated as special event payloads before closing the stream:
+
+```python
+async def event_stream():
+    try:
+        async for text in rag_query_stream(question, ...):
+            yield f"data: {text}\n\n"
+        yield "data: [DONE]\n\n"
+    except Exception as e:
+        yield f"data: [Error: {str(e)}]\n\n"
+        yield "data: [DONE]\n\n"
+```
+
+## Module Dependency Diagram
 
 ```mermaid
 classDiagram
@@ -503,6 +704,23 @@ classDiagram
         +sign_server: str
     }
 
+    class ToolsService {
+        +web_search(query) str
+        +get_stock_quote(symbol) str
+        +get_market_overview() str
+    }
+
+    class LLMClient {
+        +client: AsyncOpenAI
+        +chat_stream(messages, tools)
+        +chat_sync(messages)
+    }
+
+    class ProfessorIndexService {
+        +parse_snapshots_from_zsxq()
+        +run_parse_task(db)
+    }
+
     class SchedulerService {
         +scheduler: AsyncIOScheduler
         +setup_scheduler()
@@ -530,6 +748,8 @@ classDiagram
     RAGEngine --> EmbeddingService : embeds question
     RAGEngine --> VectorStore : dense retrieval
     RAGEngine --> HybridRetriever : bm25 + rrf
+    RAGEngine --> ToolsService : tool calls
+    RAGEngine --> LLMClient : completions
 
     HybridRetriever --> VectorStore : loads all docs
 
@@ -538,45 +758,15 @@ classDiagram
     IngestionService --> TextUtils : splits text
     IngestionService --> BaseCrawler : crawls data
 
+    ProfessorIndexService --> IngestionService : stores results
+    ProfessorIndexService --> LLMClient : vision parsing
+
     BaseCrawler <|-- ZsxqCrawler
     BaseCrawler <|-- ZhihuCrawler
 
     SchedulerService --> IngestionService : triggers
+    SchedulerService --> ProfessorIndexService : triggers
 
     Topic --> Comment : has many
     Topic --> SemanticChunk : produces
 ```
-
-## 启动生命周期
-
-FastAPI 的 lifespan 管理应用启动和关闭时的资源初始化（`backend/app/main.py`）：
-
-```python
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # === 启动阶段 ===
-    await init_db()                          # 1. 创建 SQLite 表
-
-    if settings.embedding_provider == "local":  # 2. 检查本地 Embedding 模型
-        from app.services.embedding import ensure_local_model
-        if not ensure_local_model():
-            logger.warning("本地embedding模型不可用")
-
-    setup_scheduler()                        # 3. 启动定时任务调度器
-
-    if settings.enable_bm25:                 # 4. 构建 BM25 索引
-        from app.services.hybrid_retriever import build_bm25_index
-        build_bm25_index()
-
-    yield                                    # === 应用运行 ===
-
-    # === 关闭阶段 ===
-    shutdown_scheduler()                     # 停止调度器
-```
-
-**启动顺序**：
-
-1. **数据库初始化**：通过 SQLAlchemy `create_all` 创建所有 ORM 表
-2. **Embedding 模型预检**：本地模式下确保 bge-small-zh-v1.5 模型已下载
-3. **调度器启动**：根据配置注册 Cron/Interval 任务
-4. **BM25 索引构建**：从 ChromaDB 加载所有文档构建内存 BM25 索引

@@ -1,72 +1,74 @@
 ---
 sidebar_position: 3
-title: "前端架构"
-description: "React + Tailwind CSS 前端应用架构详解"
+title: "Frontend Architecture"
+description: "React 19 + TypeScript + Tailwind CSS frontend application architecture"
 ---
 
-# 前端架构
+# Frontend Architecture
 
-## 技术栈
+## Technology Stack
 
-| 技术 | 版本 | 用途 |
-|------|------|------|
-| React | 19.2 | UI 框架，函数组件 + Hooks |
-| TypeScript | 6.0 | 类型安全 |
-| Vite | 8.0 | 构建工具，开发服务器 |
-| Tailwind CSS | 4.3 | 原子化 CSS 框架 |
-| react-router-dom | 7.18 | 客户端路由 |
-| react-markdown | 10.1 | Markdown 渲染（聊天消息） |
-| remark-gfm | 4.0 | GitHub Flavored Markdown 支持 |
-| lucide-react | 1.20 | 图标库 |
-| @tailwindcss/typography | 0.5 | prose 排版样式 |
+| Technology | Version | Purpose |
+|-----------|---------|---------|
+| React | 19.2 | UI framework, function components + Hooks |
+| TypeScript | 6.0 | Type safety across the entire codebase |
+| Vite | 8.0 | Build tool and dev server with HMR |
+| Tailwind CSS | 4.3 | Utility-first CSS framework with custom `@utility` classes |
+| react-router-dom | 7.18 | Client-side routing with nested route support |
+| react-markdown | 10.1 | Markdown rendering for chat messages |
+| remark-gfm | 4.0 | GitHub Flavored Markdown support (tables, strikethrough, etc.) |
+| lucide-react | 1.20 | Lightweight icon library |
+| @tailwindcss/typography | 0.5 | Prose styling for rendered markdown content |
 
-## 组件树
+## Component Hierarchy
 
 ```mermaid
 graph TB
-    App["App.tsx"] --> ThemeProvider["ThemeProvider<br/>(ThemeContext)"]
+    App["App.tsx"] --> ErrorBoundary["ErrorBoundary"]
+    ErrorBoundary --> ThemeProvider["ThemeProvider<br/>(ThemeContext)"]
     ThemeProvider --> AuthProvider["AuthProvider<br/>(AuthContext)"]
     AuthProvider --> BrowserRouter["BrowserRouter"]
 
-    BrowserRouter --> PublicRoutes["公共路由"]
-    BrowserRouter --> AdminRoutes["管理员路由"]
+    BrowserRouter --> PublicRoutes["Public Routes"]
+    BrowserRouter --> AdminRoutes["Admin Routes"]
 
     PublicRoutes --> DashboardPage["DashboardPage<br/>/"]
     PublicRoutes --> LoginPage["LoginPage<br/>/login"]
 
-    AdminRoutes --> ProtectedRoute["ProtectedRoute<br/>JWT 鉴权"]
-    ProtectedRoute --> Sidebar["Sidebar"]
-    ProtectedRoute --> AdminPages["管理员页面"]
+    AdminRoutes --> ProtectedRoute["ProtectedRoute<br/>JWT Guard"]
+    ProtectedRoute --> Sidebar["Sidebar<br/>(224px fixed)"]
+    ProtectedRoute --> AdminLayout["Admin Layout"]
 
-    AdminPages --> ChatPage["ChatPage<br/>/admin/chat"]
-    AdminPages --> TopicsPage["TopicsPage<br/>/admin/topics"]
-    AdminPages --> SourcesPage["SourcesPage<br/>/admin/crawl"]
-    AdminPages --> SettingsPage["SettingsPage<br/>/admin/settings"]
+    AdminLayout --> ChatPage["ChatPage<br/>/admin/chat/:sessionId"]
+    AdminLayout --> TopicsPage["TopicsPage<br/>/admin/topics"]
+    AdminLayout --> SourcesPage["SourcesPage<br/>/admin/crawl"]
+    AdminLayout --> SettingsPage["SettingsPage<br/>/admin/settings"]
 
     ChatPage --> ChatPanel["ChatPanel"]
     ChatPanel --> ChatHistoryPanel["ChatHistoryPanel"]
     ChatPanel --> MarkdownMessage["MarkdownMessage"]
+    ChatPanel --> CopyButton["CopyButton"]
 
+    DashboardPage --> DonutChart["DonutChart (SVG)"]
     DashboardPage --> MarkdownMessage
-    DashboardPage --> OpinionCard["OpinionCard"]
 
     TopicsPage --> QAContent["QAContent"]
     TopicsPage --> RichContent["RichContent"]
     TopicsPage --> ImageGallery["ImageGallery"]
 ```
 
-## 路由结构
+## Routing Structure
 
-前端使用 React Router v7 定义两级路由结构：
+The application uses React Router v7 with a two-level route structure separating public and admin areas:
 
 ```tsx
-// App.tsx 路由定义
+// App.tsx
 <Routes>
-  {/* 公共路由 - 无侧边栏 */}
+  {/* Public routes — no sidebar */}
   <Route path="/" element={<DashboardPage />} />
   <Route path="/login" element={<LoginPage />} />
 
-  {/* 管理员路由 - 带侧边栏 */}
+  {/* Admin routes — with sidebar */}
   <Route
     path="/admin/*"
     element={
@@ -75,6 +77,7 @@ graph TB
           <Sidebar />
           <main className="flex-1 overflow-y-auto">
             <Routes>
+              <Route path="/chat/:sessionId" element={<ChatPage />} />
               <Route path="/chat" element={<ChatPage />} />
               <Route path="/topics" element={<TopicsPage />} />
               <Route path="/crawl" element={<SourcesPage />} />
@@ -88,91 +91,207 @@ graph TB
 </Routes>
 ```
 
-| 路径 | 组件 | 权限 | 说明 |
-|------|------|------|------|
-| `/` | DashboardPage | 公共 | 观点摘要 + 受限问答 |
-| `/login` | LoginPage | 公共 | 管理员密码登录 |
-| `/admin/chat` | ChatPage | 管理员 | 完整 RAG 问答 |
-| `/admin/topics` | TopicsPage | 管理员 | 数据浏览与搜索 |
-| `/admin/crawl` | SourcesPage | 管理员 | 爬取任务管理 |
-| `/admin/settings` | SettingsPage | 管理员 | 系统配置 |
+| Path | Component | Access | Description |
+|------|-----------|--------|-------------|
+| `/` | DashboardPage | Public | Opinion summaries, rate-limited Q&A, Professor Index, holdings |
+| `/login` | LoginPage | Public | Admin password login |
+| `/admin/chat/:sessionId` | ChatPage | Admin | RAG Q&A with session-specific chat history |
+| `/admin/chat` | ChatPage | Admin | RAG Q&A, new session |
+| `/admin/topics` | TopicsPage | Admin | Data browsing and search |
+| `/admin/crawl` | SourcesPage | Admin | Crawl task management |
+| `/admin/settings` | SettingsPage | Admin | System configuration |
 
-## 关键页面
+## State Management
 
-### DashboardPage（公共大屏）
+The application uses React Context for global state, avoiding external state management libraries.
 
-公共大屏是系统的默认首页，面向所有访客，无需登录即可访问。
+### AuthContext
 
-**功能模块**：
+`AuthContext` manages the administrator login state (`frontend/src/contexts/AuthContext.tsx`):
 
-1. **统计概览**：4 个指标卡片，展示最新观点数、免费问答次数、各平台内容分布
-2. **最新观点**：以卡片网格展示最近 20 条观点摘要，包含平台标签、内容类型、发布时间、点赞数
-3. **AI 问答**：受限的 RAG 问答区域，支持多轮对话，IP 每日限额 10 次
+```tsx
+interface AuthContextType {
+  token: string | null
+  isAdmin: boolean       // derived: token !== null
+  login: (password: string) => Promise<void>
+  logout: () => void
+}
+```
 
-**数据流**：
+**Authentication flow**:
 
 ```mermaid
 sequenceDiagram
-    participant Page as DashboardPage
+    actor User as User
+    participant LoginPage as LoginPage
+    participant AuthCtx as AuthContext
     participant API as api.ts
     participant Backend as FastAPI
 
-    Page->>API: fetchDashboardSummary(20)
-    API->>Backend: GET /api/dashboard/summary
-    Backend-->>API: {items: [...], chat_remaining: N}
-    API-->>Page: 展示观点卡片
-
-    Page->>API: fetchChatRemaining()
-    API->>Backend: GET /api/dashboard/chat-remaining
-    Backend-->>API: {remaining: N}
-    API-->>Page: 更新剩余次数
-
-    Page->>API: dashboardChat(message, history)
-    API->>Backend: POST /api/dashboard/chat
-    Backend-->>API: SSE stream
-    API-->>Page: 逐 token 更新消息
+    User->>LoginPage: Enter password
+    LoginPage->>AuthCtx: login(password)
+    AuthCtx->>API: login(password)
+    API->>Backend: POST /api/auth/login
+    Backend-->>API: {token: "eyJ..."}
+    API-->>AuthCtx: token
+    AuthCtx->>AuthCtx: setTokenState(token)
+    AuthCtx->>AuthCtx: localStorage.setItem("admin_token", token)
+    AuthCtx-->>LoginPage: isAdmin = true
+    LoginPage->>LoginPage: navigate("/admin/chat")
 ```
 
-### ChatPanel（管理员问答）
+**Token synchronization**: `AuthContext` uses a `useEffect` hook to sync the token to the `api.ts` module-level `_token` variable. All subsequent API requests automatically include the `Authorization: Bearer <token>` header.
 
-管理员问答面板由 `ChatPanel` 组件实现，与公共问答的主要区别：
+**Startup validation**: On page load, any existing stored token is validated against the backend:
 
-- 无次数限制
-- 左侧集成 `ChatHistoryPanel` 对话历史管理
-- 通过 JWT Token 认证调用 `/api/chat` 接口
+```tsx
+useEffect(() => {
+  if (!token) return
+  checkAuth(token)
+    .then(() => {})
+    .catch(() => {
+      setTokenState(null)
+      localStorage.removeItem(TOKEN_KEY)
+    })
+}, [token])
+```
 
-### TopicsPage（数据浏览）
+### ThemeContext
 
-展示 SQLite 中存储的所有主题数据，支持：
+`ThemeContext` provides global dark mode state management (`frontend/src/contexts/ThemeContext.tsx`):
 
-- 按平台筛选（知乎 / 知识星球）
-- 按内容类型筛选（文章 / 回答 / 想法 / 问答）
-- 关键词搜索
-- 分页浏览
-- 查看评论详情
+```tsx
+interface ThemeContextValue {
+  theme: Theme  // 'light' | 'dark'
+  toggle: () => void
+}
+```
 
-### SourcesPage（数据采集）
+**Initialization logic**:
 
-管理爬取任务的页面，支持：
+1. Read from `localStorage.getItem('theme')` (highest priority)
+2. Fall back to system preference: `window.matchMedia('(prefers-color-scheme: dark)')`
+3. On toggle, sync DOM class on `<html>` element and persist to localStorage
 
-- 查看已配置的平台列表
-- 触发全量 / 单平台爬取（异步后台任务）
-- 查看爬取历史记录（CrawlTask 列表）
-- 实时显示爬取进度
+```tsx
+useEffect(() => {
+  const root = document.documentElement
+  if (theme === 'dark') {
+    root.classList.add('dark')
+  } else {
+    root.classList.remove('dark')
+  }
+  localStorage.setItem('theme', theme)
+}, [theme])
+```
 
-### SettingsPage（系统设置）
+## Key Components
 
-提供 Web 界面修改 `config.json` 中的配置项，包括爬取间隔、模型参数等。
+### ChatPanel
 
-## 样式方案
+The `ChatPanel` component (`frontend/src/components/chat/ChatPanel.tsx`) is the core Q&A interface used by both admin and public visitors.
 
-### Glassmorphism 设计系统
+**Features**:
+- SSE streaming via `ReadableStream` + `readSSEStream` utility
+- Multi-turn conversation with history persistence
+- Markdown rendering via `MarkdownMessage`
+- Copy-to-clipboard via `CopyButton`
+- Chat session management via `ChatHistoryPanel` (admin only)
 
-系统采用毛玻璃（Glassmorphism）视觉风格，通过 Tailwind CSS v4 的 `@utility` 语法定义了 4 个自定义工具类：
+**SSE streaming implementation**:
+
+```typescript
+// frontend/src/utils/sse.ts
+export async function readSSEStream(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  onChunk: (text: string) => void,
+): Promise<string> {
+  const decoder = new TextDecoder()
+  let fullText = ''
+  let done = false
+
+  while (!done) {
+    const result = await reader.read()
+    if (result.done) break
+
+    const text = decoder.decode(result.value, { stream: true })
+    const lines = text.split('\n')
+
+    for (const line of lines) {
+      if (!line.startsWith('data: ')) continue
+      const data = line.slice(6).trim()
+      if (data === '[DONE]') {
+        done = true
+        break
+      }
+      if (data) {
+        fullText += data
+        onChunk(fullText)  // Callback receives cumulative text
+      }
+    }
+  }
+
+  return fullText
+}
+```
+
+:::note
+The `onChunk` callback receives the **cumulative full text** (not incremental deltas), making it straightforward to update React state directly with the latest complete response.
+:::
+
+### RichContent
+
+The `RichContent` component (`frontend/src/components/content/RichContent.tsx`) renders topic and comment content with platform-specific formatting:
+
+- Sanitizes and renders HTML content from Zsxq topics
+- Integrates `ImageGallery` for image display with proxy support
+- Handles Q&A structured content with distinct question/answer sections
+- Uses the `proxiedImageUrl` helper to bypass anti-hotlink protections
+
+### DonutChart
+
+The `DonutChart` component (`frontend/src/components/DonutChart.tsx`) renders SVG-based donut charts on the public dashboard:
+
+- Displays platform content distribution (Zsxq vs Zhihu)
+- Animated segment transitions
+- Responsive sizing with configurable dimensions
+- Label and legend support
+
+### Sidebar
+
+The `Sidebar` component (`frontend/src/components/layout/Sidebar.tsx`) provides a fixed-width (224px) navigation panel for admin pages:
+
+```tsx
+const navItems = [
+  { to: '/admin/chat',     icon: MessageSquare, label: 'Q&A' },
+  { to: '/admin/topics',   icon: FileText,      label: 'Data Browser' },
+  { to: '/admin/crawl',    icon: RefreshCw,     label: 'Crawl Manager' },
+  { to: '/admin/settings', icon: Settings,       label: 'Settings' },
+]
+```
+
+The bottom section includes: return to public dashboard, dark mode toggle, and logout.
+
+### ProtectedRoute
+
+The `ProtectedRoute` component (`frontend/src/components/auth/ProtectedRoute.tsx`) guards admin routes. When the user is not authenticated, it redirects to the login page:
+
+```tsx
+<ProtectedRoute>
+  <div className="flex h-screen overflow-hidden">
+    <Sidebar />
+    <main>{/* Admin pages */}</main>
+  </div>
+</ProtectedRoute>
+```
+
+## Styling Approach
+
+### Glassmorphism Design System
+
+The application uses a glassmorphism visual style. Four custom utility classes are defined in `frontend/src/index.css` using Tailwind CSS v4's `@utility` syntax:
 
 ```css
-/* index.css */
-
 @utility glass {
   background: oklch(1 0 0 / 0.7);
   backdrop-filter: blur(24px) saturate(1.2);
@@ -200,250 +319,52 @@ sequenceDiagram
 }
 ```
 
-| 工具类 | 用途 | 透明度 | 模糊度 |
-|--------|------|--------|--------|
-| `glass` | 浅色模式下的顶层容器（Header、Sidebar） | 70% | 24px |
-| `glass-dark` | 深色模式下的顶层容器 | 65% | 24px |
-| `glass-card` | 浅色模式下的卡片组件 | 85% | 20px |
-| `glass-card-dark` | 深色模式下的卡片组件 | 80% | 20px |
+| Utility Class | Usage | Opacity | Blur |
+|--------------|-------|---------|------|
+| `glass` | Light-mode top-level containers (Header, Sidebar) | 70% | 24px |
+| `glass-dark` | Dark-mode top-level containers | 65% | 24px |
+| `glass-card` | Light-mode card components | 85% | 20px |
+| `glass-card-dark` | Dark-mode card components | 80% | 20px |
 
-**使用示例**：
+**Usage pattern**:
 
 ```tsx
 <header className="glass dark:glass-dark sticky top-0 z-10">
   <div className="glass-card dark:glass-card-dark rounded-xl p-4">
-    {/* 卡片内容 */}
+    {/* Card content */}
   </div>
 </header>
 ```
 
-### 暗色模式
+### Dark Mode
 
-暗色模式通过 Tailwind 的 `dark:` 变体和自定义 `@custom-variant` 实现：
+Dark mode is implemented via Tailwind's `dark:` variant with a custom `@custom-variant` declaration:
 
 ```css
 @custom-variant dark (&:where(.dark, .dark *));
 ```
 
-配合 `ThemeContext` 在 `<html>` 元素上切换 `dark` class：
+The `ThemeContext` toggles the `dark` class on the `<html>` element, activating all `dark:` prefixed utility classes across the application.
 
-```tsx
-useEffect(() => {
-  const root = document.documentElement
-  if (theme === 'dark') {
-    root.classList.add('dark')
-  } else {
-    root.classList.remove('dark')
-  }
-  localStorage.setItem('theme', theme)
-}, [theme])
-```
+## API Service Layer
 
-## 暗色模式实现
+The `services/api.ts` module (`frontend/src/services/api.ts`) provides a unified HTTP request interface.
 
-### ThemeContext
-
-`ThemeContext` 提供全局的主题状态管理：
-
-```tsx
-// contexts/ThemeContext.tsx
-interface ThemeContextValue {
-  theme: Theme  // 'light' | 'dark'
-  toggle: () => void
-}
-```
-
-**初始化逻辑**：
-
-1. 优先读取 `localStorage.getItem('theme')`
-2. 若无存储，检测系统偏好 `window.matchMedia('(prefers-color-scheme: dark)')`
-3. 每次切换时同步更新 DOM class 和 localStorage
-
-**使用方式**：
-
-```tsx
-import { useTheme } from '../contexts/ThemeContext'
-
-function MyComponent() {
-  const { theme, toggle } = useTheme()
-  return (
-    <button onClick={toggle}>
-      {theme === 'dark' ? '浅色模式' : '深色模式'}
-    </button>
-  )
-}
-```
-
-## SSE 流式处理
-
-### readSSEStream 工具
-
-`readSSEStream` 是封装了 SSE 协议解析的核心工具函数（`frontend/src/utils/sse.ts`）：
-
-```typescript
-export async function readSSEStream(
-  reader: ReadableStreamDefaultReader<Uint8Array>,
-  onChunk: (text: string) => void,
-): Promise<string> {
-  const decoder = new TextDecoder()
-  let fullText = ''
-  let done = false
-
-  while (!done) {
-    const result = await reader.read()
-    if (result.done) break
-
-    const text = decoder.decode(result.value, { stream: true })
-    const lines = text.split('\n')
-
-    for (const line of lines) {
-      if (!line.startsWith('data: ')) continue
-      const data = line.slice(6).trim()
-      if (data === '[DONE]') {
-        done = true
-        break
-      }
-      if (data) {
-        fullText += data
-        onChunk(fullText)  // 回调累计文本
-      }
-    }
-  }
-
-  return fullText
-}
-```
-
-**关键设计**：
-
-- `onChunk` 回调接收**累计完整文本**（而非增量），方便直接替换状态
-- 正确处理 `[DONE]` 终止信号
-- 使用 `stream: true` 解码器处理跨 chunk 的多字节字符
-
-### 聊天组件中的 SSE 使用
-
-```tsx
-// ChatPanel.tsx 中的流式读取
-const reader = res.body.getReader()
-const fullText = await readSSEStream(reader, (text) => {
-  setMessages((prev) => {
-    const updated = [...prev]
-    updated[updated.length - 1] = { role: 'assistant', content: text }
-    return updated
-  })
-})
-```
-
-## 对话历史持久化
-
-### chatHistory 工具
-
-对话历史存储在浏览器 `localStorage` 中，按作用域（`public` / `admin`）隔离（`frontend/src/utils/chatHistory.ts`）。
-
-**数据结构**：
-
-```typescript
-interface ChatSession {
-  id: string       // 基于时间戳 + 随机数生成
-  title: string    // 从第一条用户消息截取（最多 30 字符）
-  messages: { role: string; content: string }[]
-  createdAt: number
-  updatedAt: number
-}
-```
-
-**存储 Key**：
-
-- 公共访客：`chat_sessions_public`
-- 管理员：`chat_sessions_admin`
-
-**API 方法**：
-
-| 方法 | 说明 |
-|------|------|
-| `loadSessions(scope)` | 加载所有会话，按更新时间倒序 |
-| `createSession(scope, messages)` | 创建新会话并持久化 |
-| `updateSession(scope, sessionId, messages)` | 更新已有会话 |
-| `deleteSession(scope, sessionId)` | 删除会话 |
-
-**限制**：最多保留 50 个历史会话（`MAX_SESSIONS = 50`）。
-
-## 认证状态管理
-
-### AuthContext
-
-`AuthContext` 管理管理员登录状态（`frontend/src/contexts/AuthContext.tsx`）：
-
-```tsx
-interface AuthContextType {
-  token: string | null
-  isAdmin: boolean       // token !== null
-  login: (password: string) => Promise<void>
-  logout: () => void
-}
-```
-
-**认证流程**：
-
-```mermaid
-sequenceDiagram
-    participant User as 用户
-    participant LoginPage as LoginPage
-    participant AuthCtx as AuthContext
-    participant API as api.ts
-    participant Backend as FastAPI
-
-    User->>LoginPage: 输入密码
-    LoginPage->>AuthCtx: login(password)
-    AuthCtx->>API: login(password)
-    API->>Backend: POST /api/auth/login
-    Backend-->>API: {token: "eyJ..."}
-    API-->>AuthCtx: token
-    AuthCtx->>AuthCtx: setTokenState(token)
-    AuthCtx->>AuthCtx: localStorage.setItem("admin_token", token)
-    AuthCtx-->>LoginPage: isAdmin = true
-    LoginPage->>LoginPage: navigate("/admin/chat")
-```
-
-**Token 同步**：`AuthContext` 通过 `useEffect` 将 token 同步到 `api.ts` 模块中的 `_token` 变量，所有后续 API 请求自动附加 `Authorization: Bearer <token>` 头。
-
-**启动验证**：页面加载时自动检查已存储 token 的有效性：
-
-```tsx
-useEffect(() => {
-  if (!token) return
-  checkAuth(token)
-    .then(() => {})
-    .catch(() => {
-      setTokenState(null)
-      localStorage.removeItem(TOKEN_KEY)
-    })
-}, [token])
-```
-
-### ProtectedRoute
-
-`ProtectedRoute` 组件保护管理员路由，未认证时重定向到登录页：
-
-```tsx
-<ProtectedRoute>
-  <div className="flex h-screen overflow-hidden">
-    <Sidebar />
-    <main>{/* 管理员页面 */}</main>
-  </div>
-</ProtectedRoute>
-```
-
-## API 请求封装
-
-`services/api.ts` 提供统一的 HTTP 请求封装：
+### Core Request Helper
 
 ```typescript
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (_token) headers['Authorization'] = `Bearer ${_token}`
+  const headers: Record<string, string> = {
+    'Content-Type': 'application/json',
+  }
+  if (_token) {
+    headers['Authorization'] = `Bearer ${_token}`
+  }
 
-  const res = await fetch(`${BASE}${url}`, { ...options, headers })
+  const res = await fetch(`${BASE}${url}`, {
+    ...options,
+    headers: { ...headers, ...options?.headers },
+  })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }))
     throw new Error(err.detail || 'Request failed')
@@ -452,7 +373,26 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 }
 ```
 
-**图片代理**：为绕过知识星球和知乎的防盗链机制，图片 URL 通过后端代理加载：
+### Token Management
+
+The module maintains a module-level `_token` variable that is synchronized with `AuthContext`:
+
+```typescript
+let _token: string | null = null
+
+export function setToken(token: string | null) {
+  _token = token
+}
+
+// Restore from localStorage on module initialization
+if (typeof window !== 'undefined') {
+  _token = localStorage.getItem('admin_token')
+}
+```
+
+### Image Proxy
+
+To bypass anti-hotlink protections from Zsxq and Zhihu, image URLs are routed through a backend proxy:
 
 ```typescript
 export function proxiedImageUrl(url: string): string {
@@ -463,17 +403,30 @@ export function proxiedImageUrl(url: string): string {
 }
 ```
 
-## 左侧导航栏
+### Conversation History Persistence
 
-`Sidebar` 组件为管理员后台提供固定宽度（224px）的侧边导航：
+Chat sessions are stored in browser `localStorage`, scoped by role (`frontend/src/utils/chatHistory.ts`):
 
-```tsx
-const navItems = [
-  { to: '/admin/chat',    icon: MessageSquare, label: '问答' },
-  { to: '/admin/topics',  icon: FileText,      label: '数据浏览' },
-  { to: '/admin/crawl',   icon: RefreshCw,     label: '数据采集' },
-  { to: '/admin/settings', icon: Settings,      label: '设置' },
-]
+```typescript
+interface ChatSession {
+  id: string        // Timestamp + random ID
+  title: string     // Truncated first user message (max 30 chars)
+  messages: { role: string; content: string }[]
+  createdAt: number
+  updatedAt: number
+}
 ```
 
-底部操作区包含：返回公共大屏、切换暗色模式、退出登录。
+| Storage Key | Scope |
+|------------|-------|
+| `chat_sessions_public` | Public visitor conversations |
+| `chat_sessions_admin` | Admin conversations |
+
+| Method | Description |
+|--------|-------------|
+| `loadSessions(scope)` | Load all sessions, sorted by `updatedAt` descending |
+| `createSession(scope, messages)` | Create and persist a new session |
+| `updateSession(scope, sessionId, messages)` | Update an existing session |
+| `deleteSession(scope, sessionId)` | Delete a session |
+
+**Limit**: A maximum of 50 sessions are retained (`MAX_SESSIONS = 50`).

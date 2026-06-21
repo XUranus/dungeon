@@ -73,32 +73,6 @@
   animation: flowPulse 2s ease-in-out infinite;
 }
 
-/* ── Interactive toggle ── */
-.toggle-group {
-  display: flex;
-  gap: 0;
-  border-radius: 8px;
-  overflow: hidden;
-  border: 1px solid var(--ifm-color-primary);
-  display: inline-flex;
-  margin: 1rem 0;
-}
-
-.toggle-btn {
-  padding: 0.5rem 1rem;
-  cursor: pointer;
-  background: transparent;
-  color: var(--ifm-color-primary);
-  border: none;
-  font-size: 0.875rem;
-  transition: all 0.2s;
-}
-
-.toggle-btn.active {
-  background: var(--ifm-color-primary);
-  color: var(--ifm-background-color);
-}
-
 /* ── Mermaid theme fix ── */
 .mermaid {
   font-family: var(--ifm-font-family-base) !important;
@@ -126,4 +100,78 @@ table th {
 /* ── Admonition custom ── */
 .admonition {
   border-radius: 8px;
+}
+
+/* ── Interactive card hover ── */
+.interactive-card {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.interactive-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+[data-theme='dark'] .interactive-card:hover {
+  box-shadow: 0 4px 12px rgba(255, 255, 255, 0.05);
+}
+
+/* ── Fade in animation ── */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in-up {
+  animation: fadeInUp 0.4s ease-out;
+}
+
+/* ── Step connector lines ── */
+.step-connector {
+  position: relative;
+}
+
+.step-connector::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  bottom: -16px;
+  width: 2px;
+  height: 16px;
+  background: rgba(128, 128, 128, 0.2);
+}
+
+/* ── Badge styles ── */
+.badge-new {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.65rem;
+  font-weight: 600;
+  background: #10b981;
+  color: white;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+/* ── Responsive improvements ── */
+@media (max-width: 768px) {
+  .hero {
+    padding: 2rem 1rem;
+  }
+
+  table {
+    font-size: 0.82rem;
+  }
+}
+
+/* ── Navbar locale dropdown ── */
+.navbar__item.dropdown {
+  font-size: 0.9rem;
 }

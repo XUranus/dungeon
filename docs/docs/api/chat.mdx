@@ -1,24 +1,24 @@
 ---
 sidebar_position: 4
 title: Chat API
-description: 管理员 RAG 问答接口 — 无限次数、支持多轮对话和平台过滤
-keywords: [Chat, RAG, 多轮对话, SSE, 管理员]
+description: Admin RAG chat endpoint — Vercel AI SDK UI Message Stream, tool calling, multi-turn conversations
+keywords: [chat, RAG, SSE, Vercel AI SDK, tool calling, multi-turn]
 ---
 
 # Chat API
 
-管理员专属的 RAG 问答接口。与公共聊天相比，**无频率限制**，支持按平台和 KOL 过滤检索范围，支持多轮对话。
+The admin chat endpoint provides an unrestricted RAG question-answering interface. Unlike the public dashboard chat, it has **no rate limits**, supports platform and KOL filtering, and uses the **Vercel AI SDK UI Message Stream** protocol for structured SSE events including tool calling.
 
-**路由前缀：** `/api/chat`
-**认证要求：** Bearer Token（管理员）
+**Route prefix:** `/api/chat`
+**Authentication:** Bearer Token (admin)
 
 ---
 
 ## POST /api/chat
 
-基于检索增强生成（RAG）的问答接口。系统从 ChromaDB 向量库和 BM25 索引中检索相关文档片段，拼接为上下文后交给 LLM 生成回答。响应以 SSE 流式返回。
+Query the RAG system with a user message. The system retrieves relevant document chunks from ChromaDB (dense vectors) and BM25 (sparse keywords), fuses them via RRF, and streams the LLM-generated answer.
 
-### 请求
+### Request
 
 ```
 POST /api/chat
@@ -26,139 +26,230 @@ Content-Type: application/json
 Authorization: Bearer <token>
 ```
 
-**请求体：**
+**Request Body:**
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `message` | `string` | 是 | 用户提问内容 |
-| `history` | `array` | 否 | 多轮对话历史 |
-| `kol_id` | `integer` | 否 | 按 KOL ID 过滤检索范围 |
-| `platform` | `string` | 否 | 按平台过滤检索范围（`"zhihu"` 或 `"zsxq"`） |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `message` | `string` | Yes | The user's question |
+| `history` | `array` | No | Multi-turn conversation history |
+| `kol_id` | `integer` | No | Filter retrieval by KOL ID |
+| `platform` | `string` | No | Filter retrieval by platform (`"zhihu"` or `"zsxq"`) |
 
-**`history` 数组元素结构：**
+**`history` Array Element Structure:**
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `role` | `string` | `"user"` 或 `"assistant"` |
-| `content` | `string` | 消息内容 |
+| Field | Type | Description |
+|-------|------|-------------|
+| `role` | `string` | `"user"` or `"assistant"` |
+| `content` | `string` | Message content |
 
 :::note
-`kol_id` 和 `platform` 互斥，同时提供时 `kol_id` 优先。多轮对话最多保留最近 12 条历史消息。
+`kol_id` and `platform` are mutually exclusive. If both are provided, `kol_id` takes precedence. Multi-turn history is limited to the most recent 12 messages.
 :::
 
-### 请求示例
+### Request Examples
 
-**基础问答：**
+**Basic Q&A:**
 
 ```json
 {
-  "message": "星主对当前A股市场的整体判断是什么？"
+  "message": "What is the host's overall assessment of the A-share market?"
 }
 ```
 
-**带平台过滤：**
+**With Platform Filter:**
 
 ```json
 {
-  "message": "星主最近在知乎说了什么？",
+  "message": "What has the host said recently on Zhihu?",
   "platform": "zhihu"
 }
 ```
 
-**多轮对话：**
+**Multi-turn Conversation:**
 
 ```json
 {
-  "message": "那他对港股科技股的看法呢？",
+  "message": "What about Hong Kong tech stocks?",
   "history": [
-    {"role": "user", "content": "星主对A股科技板块怎么看？"},
-    {"role": "assistant", "content": "根据星主近期发言，他看好AI算力方向..."},
-    {"role": "user", "content": "具体推荐了哪些标的？"},
-    {"role": "assistant", "content": "星主提到了以下几个方向..."}
+    {"role": "user", "content": "What does the host think about the A-share tech sector?"},
+    {"role": "assistant", "content": "Based on recent posts, the host is bullish on AI compute..."},
+    {"role": "user", "content": "Which specific stocks were mentioned?"},
+    {"role": "assistant", "content": "The host mentioned the following directions..."}
   ]
 }
 ```
 
-### 响应
+### Response
 
-**成功 (200)：** SSE 流式响应
+**Success (200):** SSE stream using the Vercel AI SDK UI Message Stream protocol.
+
+The stream consists of structured JSON events:
 
 ```
-data: 根据
-data: 星主
-data: 在知乎
-data: 和知识星球
-data: 的发言记录
-data: ，
-data: 他
-data: 对港股
-data: 科技股
-data: 持乐观态度
-data: ...
+data: {"type":"start","messageId":"msg-abc123"}
+
+data: {"type":"text-start","id":"text-0"}
+
+data: {"type":"text-delta","id":"text-0","delta":"Based"}
+data: {"type":"text-delta","id":"text-0","delta":" on"}
+data: {"type":"text-delta","id":"text-0","delta":" the"}
+data: {"type":"text-delta","id":"text-0","delta":" host's"}
+data: {"type":"text-delta","id":"text-0","delta":" recent"}
+data: {"type":"text-delta","id":"text-0","delta":" posts"}
+
+data: {"type":"text-end","id":"text-0"}
+
+data: {"type":"finish"}
 data: [DONE]
 ```
 
-**错误 (401)：**
+**Error (401):**
 
 ```json
 {
-  "detail": "未登录"
+  "detail": "Not authenticated"
 }
 ```
 
-或
-
-```json
-{
-  "detail": "Token 无效或已过期"
-}
-```
-
-### curl 示例
+### curl Example
 
 ```bash
 curl -N -X POST http://localhost:8000/api/chat \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
-  -d '{"message": "星主对新能源板块怎么看？"}'
+  -d '{"message": "What does the host think about the new energy sector?"}'
 ```
 
-带平台过滤：
+With platform filter:
 
 ```bash
 curl -N -X POST http://localhost:8000/api/chat \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
-  -d '{"message": "星主最近说了什么？", "platform": "zsxq"}'
+  -d '{"message": "What has the host said recently?", "platform": "zsxq"}'
 ```
 
 ---
 
-## 与公共聊天的区别
+## Vercel AI SDK UI Message Stream Protocol
 
-| 特性 | `/api/dashboard/chat` | `/api/chat` |
-|------|----------------------|-------------|
-| **认证** | 无需 | 需要 JWT Token |
-| **频率限制** | IP 级每日 N 次 | 无限制 |
-| **平台过滤** | 不支持 | 支持 `platform` 和 `kol_id` |
-| **多轮对话** | 支持 | 支持（最多 12 轮） |
-| **检索范围** | 全量文档 | 可按平台/KOL 缩小范围 |
+The admin chat endpoint emits events following the [Vercel AI SDK UI Message Stream](https://sdk.vercel.ai/docs/ai-sdk-ui/stream-protocol) specification.
+
+### Event Types
+
+| Event Type | Description | Payload Fields |
+|------------|-------------|----------------|
+| `start` | Stream begins, assigns a message ID | `messageId` |
+| `text-start` | A new text block begins | `id` (text block ID) |
+| `text-delta` | Incremental text content | `id`, `delta` (the new text fragment) |
+| `text-end` | The text block is complete | `id` |
+| `tool-input-start` | A tool call begins | `toolCallId`, `toolName` |
+| `tool-input-delta` | Incremental tool input (JSON) | `toolCallId`, `argsTextDelta` |
+| `tool-input-end` | Tool input is complete | `toolCallId` |
+| `tool-output-available` | Tool execution result | `toolCallId`, `output` |
+| `finish` | Stream is complete | (none) |
+
+### Event Flow Diagram
+
+```mermaid
+sequenceDiagram
+    participant Client as Client
+    participant API as Chat API
+    participant RAG as RAG Pipeline
+    participant LLM as LLM
+
+    Client->>API: POST /api/chat {message, history}
+    API->>RAG: Hybrid retrieval (Dense + BM25)
+    RRF->>LLM: Context + prompt
+    API-->>Client: data: {"type":"start","messageId":"msg-1"}
+    API-->>Client: data: {"type":"text-start","id":"text-0"}
+
+    loop Text streaming
+        API-->>Client: data: {"type":"text-delta","id":"text-0","delta":"..."}
+    end
+
+    API-->>Client: data: {"type":"text-end","id":"text-0"}
+    API-->>Client: data: {"type":"finish"}
+    API-->>Client: data: [DONE]
+```
+
+### Tool Calling Events
+
+When the LLM decides to call a tool (e.g., web search via Tavily), the stream includes tool-related events:
+
+```
+data: {"type":"start","messageId":"msg-abc123"}
+
+data: {"type":"tool-input-start","toolCallId":"tc-1","toolName":"tavily_search"}
+data: {"type":"tool-input-delta","toolCallId":"tc-1","argsTextDelta":"{\"query\":"}
+data: {"type":"tool-input-delta","toolCallId":"tc-1","argsTextDelta":"\"latest fed rate\"}"}
+data: {"type":"tool-input-end","toolCallId":"tc-1"}
+
+data: {"type":"tool-output-available","toolCallId":"tc-1","output":"[search results...]"}
+
+data: {"type":"text-start","id":"text-0"}
+data: {"type":"text-delta","id":"text-0","delta":"According"}
+data: {"type":"text-delta","id":"text-0","delta":" to"}
+data: {"type":"text-delta","id":"text-0","delta":" recent"}
+data: {"type":"text-delta","id":"text-0","delta":" reports"}
+data: {"type":"text-end","id":"text-0"}
+
+data: {"type":"finish"}
+data: [DONE]
+```
 
 ---
 
-## RAG 检索流程
+## Multi-Turn Conversation
+
+The `history` array provides context from previous exchanges. The system uses this to maintain conversational coherence.
+
+### History Management
 
 ```mermaid
 flowchart TD
-    Q[用户提问] --> E[生成 Query Embedding]
-    E --> DENSE[Dense 向量检索<br/>ChromaDB, top_k*3]
-    E --> BM25[BM25 稀疏检索<br/>内存索引, top_k*3]
-    DENSE --> RRF[RRF 融合排序<br/>dense_weight=1.5, bm25_weight=1.0]
-    BM25 --> RRF
-    RRF --> TOP[取 top_k=12 个片段]
-    TOP --> CTX[拼接上下文<br/>含平台标签、标题、日期、URL]
-    CTX --> LLM[LLM 生成回答<br/>SSE 流式输出]
-    LLM --> SSE[SSE 返回客户端]
+    A[User sends new message] --> B[Build message list]
+    B --> C[Combine: history + new message]
+    C --> D{History length > 12?}
+    D -->|Yes| E[Trim to last 12 messages]
+    D -->|No| F[Use full history]
+    E --> G[Send to LLM with context]
+    F --> G
 ```
 
-LLM 会基于检索到的参考资料生成回答，并在引用处标注来源链接。
+:::tip
+Keep history concise. Excessively long histories increase token consumption and may dilute the relevance of retrieved context. The system automatically trims to the last 12 messages.
+:::
+
+---
+
+## Differences from Public Chat
+
+| Feature | `POST /api/dashboard/chat` | `POST /api/chat` |
+|---------|---------------------------|-------------------|
+| **Authentication** | None | JWT Bearer Token |
+| **Rate Limiting** | Per-visitor daily quota | Unlimited |
+| **Platform Filter** | Not supported | `platform` and `kol_id` params |
+| **SSE Format** | Plain text deltas | Vercel AI SDK UI Message Stream |
+| **Tool Calling** | Not supported | Supported (Tavily, etc.) |
+| **Multi-turn** | Supported | Supported (up to 12 turns) |
+| **Retrieval Scope** | Full document set | Filterable by platform/KOL |
+
+---
+
+## RAG Retrieval Flow
+
+```mermaid
+flowchart TD
+    Q[User Question] --> E[Generate Query Embedding]
+    E --> DENSE[Dense Vector Retrieval<br/>ChromaDB, top_k x3]
+    E --> BM25[BM25 Sparse Retrieval<br/>In-memory index, top_k x3]
+    DENSE --> RRF[RRF Fusion Ranking<br/>dense_weight=1.5, bm25_weight=1.0]
+    BM25 --> RRF
+    RRF --> TOP[Select top_k=12 Chunks]
+    TOP --> CTX[Assemble Context<br/>with platform, title, date, URL]
+    CTX --> LLM[LLM Generate Answer<br/>SSE streaming output]
+    LLM --> SSE[SSE to Client]
+```
+
+The LLM generates an answer based on the retrieved reference material, citing source links where applicable.

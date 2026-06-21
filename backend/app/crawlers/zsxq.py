@@ -10,8 +10,10 @@
 import httpx
 import asyncio
 import random
+import re
 import logging
 from datetime import datetime
+from urllib.parse import unquote
 
 from app.crawlers.base import BaseCrawler, CrawledTopic, CrawledComment, CrawledKOLProfile
 from app.config import settings
@@ -230,6 +232,240 @@ class ZsxqCrawler(BaseCrawler):
         logger.debug(f"[zsxq] topic_id={topic_id} 评论数: {len(comments)}")
         return comments
 
+    # ── 专栏文章 ──
+
+    async def crawl_columns(self, group_id: str) -> list[dict]:
+        """获取星球的专栏列表，返回 [{column_id, name, topics_count}]"""
+        try:
+            resp = await self._request_with_retry("GET", f"/groups/{group_id}/columns")
+            columns = resp.json().get("resp_data", {}).get("columns", [])
+            result = []
+            for col in columns:
+                result.append({
+                    "column_id": col["column_id"],
+                    "name": col.get("name", ""),
+                    "topics_count": col.get("statistics", {}).get("topics_count", 0),
+                })
+            logger.info("[zsxq] 获取专栏列表: %d 个专栏", len(result))
+            return result
+        except Exception as e:
+            logger.error("[zsxq] 获取专栏列表失败: %s", e)
+            return []
+
+    async def crawl_column_articles(
+        self, group_id: str, column_id: int, limit: int = 100
+    ) -> list[CrawledTopic]:
+        """抓取专栏下的文章，返回 CrawledTopic 列表（content_type='article'）"""
+        logger.info("[zsxq] 开始抓取专栏文章: column_id=%d, limit=%d", column_id, limit)
+
+        # Step 1: 列出专栏中的文章
+        try:
+            resp = await self._request_with_retry(
+                "GET",
+                f"/groups/{group_id}/columns/{column_id}/topics",
+                params={"count": min(limit, 100)},
+            )
+            items = resp.json().get("resp_data", {}).get("topics", [])
+        except Exception as e:
+            logger.error("[zsxq] 专栏文章列表获取失败: column_id=%d, %s", column_id, e)
+            return []
+
+        if not items:
+            logger.info("[zsxq] 专栏 column_id=%d 无文章", column_id)
+            return []
+
+        logger.info("[zsxq] 专栏 column_id=%d 返回 %d 篇文章", column_id, len(items))
+
+        # Step 2: 对每篇文章获取详情 + HTML 内容
+        articles: list[CrawledTopic] = []
+        for item in items:
+            topic_id = item.get("topic_id")
+            if not topic_id:
+                continue
+            try:
+                article = await self._fetch_article_detail(topic_id, item)
+                if article:
+                    articles.append(article)
+                await self._delay()
+            except Exception as e:
+                logger.warning("[zsxq] 文章获取失败: topic_id=%s, %s", topic_id, e)
+
+        logger.info("[zsxq] 专栏文章抓取完成: %d/%d 篇", len(articles), len(items))
+        return articles
+
+    async def _fetch_article_detail(
+        self, topic_id: int, summary: dict
+    ) -> CrawledTopic | None:
+        """获取单篇文章的完整内容（通过 topic API + HTML 页面）"""
+        # 获取 topic 详情以拿到 article_id
+        try:
+            resp = await self._request_with_retry("GET", f"/topics/{topic_id}")
+            topic_data = resp.json().get("resp_data", {}).get("topic", {})
+        except Exception as e:
+            logger.warning("[zsxq] topic 详情获取失败: topic_id=%s, %s", topic_id, e)
+            return None
+
+        # 从 talk.article 或 article 中提取 article_id
+        article_info = {}
+        talk = topic_data.get("talk", {})
+        if "article" in talk and isinstance(talk["article"], dict):
+            article_info = talk["article"]
+        elif "article" in topic_data and isinstance(topic_data["article"], dict):
+            article_info = topic_data["article"]
+
+        article_id = article_info.get("article_id")
+        article_url = article_info.get("article_url", "")
+
+        # 提取文本和图片
+        content_text, images = _extract_topic_content(topic_data)[:2] if False else ("", [])
+        content_text, images, _ = _extract_topic_content(topic_data)
+
+        # 如果有 article_id，从 HTML 获取更完整的内容（含图片）
+        if article_id:
+            html_content, html_images = await self._fetch_article_html(article_id)
+            if html_content:
+                content_text = html_content
+            if html_images:
+                images = [{"url": url} for url in html_images]
+
+        if not content_text and not summary.get("title"):
+            return None
+
+        title = summary.get("title") or topic_data.get("title") or ""
+        pub_dt = _parse_zsxq_time(summary.get("create_time", ""))
+
+        return CrawledTopic(
+            platform_topic_id=str(topic_id),
+            title=title,
+            content=content_text,
+            content_type="article",
+            url=article_url or f"https://wx.zsxq.com/topic/{topic_id}",
+            like_count=topic_data.get("likes_count", 0),
+            comment_count=topic_data.get("comments_count", 0),
+            published_at=pub_dt,
+            images=images,
+            raw_json=topic_data,
+        )
+
+    async def _fetch_article_html(self, article_id: str) -> tuple[str, list[str]]:
+        """从 articles.zsxq.com 获取文章 HTML，提取纯文本和图片 URL"""
+        url = f"https://articles.zsxq.com/id_{article_id}.html"
+        try:
+            async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+                resp = await client.get(url, headers={"Cookie": self.cookie})
+                if resp.status_code != 200:
+                    logger.warning("[zsxq] 文章 HTML 获取失败: %s -> %d", url, resp.status_code)
+                    return "", []
+                html = resp.text
+        except Exception as e:
+            logger.warning("[zsxq] 文章 HTML 请求异常: %s, %s", url, e)
+            return "", []
+
+        import re
+        # 提取 ql-editor 中的内容
+        start = html.find('class="content ql-editor"')
+        if start < 0:
+            return "", []
+        start = html.find(">", start) + 1
+        end = html.find("</div>", start)
+        if end < 0:
+            return "", []
+        content_html = html[start:end]
+
+        # 提取图片 URL
+        image_urls = list(dict.fromkeys(
+            re.findall(r'(https://article-images\.zsxq\.com/\S+?)(?=["\s<])', content_html)
+        ))
+
+        # 先转换 zsxq 自定义标签，再提取纯文本
+        content_html = zsxq_xml_to_html(content_html)
+        text = re.sub(r'<br\s*/?>', '\n', content_html)
+        text = re.sub(r'<img[^>]*>', '', text)  # 移除 img 标签
+        text = re.sub(r'<[^>]+>', '', text)      # 移除所有 HTML 标签
+        text = re.sub(r'\n{3,}', '\n\n', text).strip()
+        # 解码 HTML 实体
+        text = text.replace('&amp;', '&').replace('&lt;', '<').replace('&gt;', '>')
+
+        return text, image_urls
+
+
+def zsxq_xml_to_html(text: str) -> str:
+    """将知识星球自定义 XML 标签转换为标准 HTML。
+
+    已知标签类型:
+      <e type="text_bold" title="URL编码文本" />
+        → <strong>解码文本</strong>
+
+      <e type="web" href="URL编码链接" title="URL编码标题" />
+        → <a href="解码链接">解码标题</a>
+
+      <e type="mention" uid="..." title="@用户名" />
+        → <strong>@用户名</strong>
+
+      <e type="hashtag" hid="..." title="#话题#" />
+        → <strong>#话题#</strong>
+
+    同时处理 <e> 的非自闭合写法: <e type="text_bold">文本</e> → <strong>文本</strong>
+    """
+    if not text or "<e " not in text:
+        return text
+
+    # 1) 非自闭合: <e type="...">innerText</e>
+    def _replace_open_close(m: re.Match) -> str:
+        attrs = m.group(1)
+        inner = m.group(2).strip()
+        tag_type = _attr(attrs, "type")
+        if tag_type == "text_bold":
+            return f"<strong>{inner}</strong>"
+        if tag_type == "web":
+            href = _attr(attrs, "href")
+            return f'<a href="{unquote(href)}">{inner}</a>' if href else inner
+        if tag_type == "mention":
+            return f"<strong>{inner}</strong>"
+        if tag_type == "hashtag":
+            return f"<strong>{inner}</strong>"
+        return inner
+
+    text = re.sub(
+        r'<e\s+([^>]*)>(.+?)</e>',
+        _replace_open_close,
+        text,
+        flags=re.DOTALL,
+    )
+
+    # 2) 自闭合: <e type="..." ... />
+    def _replace_self_closing(m: re.Match) -> str:
+        attrs = m.group(1)
+        tag_type = _attr(attrs, "type")
+        if tag_type == "text_bold":
+            title = _attr(attrs, "title")
+            return f"<strong>{unquote(title)}</strong>" if title else ""
+        if tag_type == "web":
+            href = _attr(attrs, "href")
+            title = _attr(attrs, "title")
+            decoded_href = unquote(href) if href else ""
+            decoded_title = unquote(title) if title else decoded_href
+            if decoded_href:
+                return f'<a href="{decoded_href}">{decoded_title}</a>'
+            return decoded_title
+        if tag_type == "mention":
+            title = _attr(attrs, "title")
+            return f"<strong>{title}</strong>" if title else ""
+        if tag_type == "hashtag":
+            title = _attr(attrs, "title")
+            return f"<strong>{unquote(title)}</strong>" if title else ""
+        return ""
+
+    text = re.sub(r'<e\s+([^>]*)\s*/>', _replace_self_closing, text)
+
+    return text
+
+
+def _attr(attrs_str: str, name: str) -> str | None:
+    """从属性字符串中提取指定属性值"""
+    m = re.search(rf'{name}="([^"]*)"', attrs_str)
+    return m.group(1) if m else None
+
 
 def _parse_zsxq_time(time_str: str) -> datetime | None:
     if not time_str:
@@ -313,6 +549,8 @@ def _extract_topic_content(item: dict) -> tuple[str, list[dict], str | None]:
                 break
 
     content = "\n\n".join(parts)
+    # 将 zsxq 自定义 XML 标签转换为标准 HTML
+    content = zsxq_xml_to_html(content)
     return content, images, title
 
 
@@ -321,7 +559,7 @@ def _parse_comment(item: dict) -> CrawledComment:
     return CrawledComment(
         platform_comment_id=str(item["comment_id"]),
         author_name=item.get("owner", item.get("author", {})).get("name"),
-        content=item.get("text", ""),
+        content=zsxq_xml_to_html(item.get("text", "")),
         like_count=item.get("likes_count", 0),
         published_at=_parse_zsxq_time(item.get("create_time", "")),
         images=_extract_images(item),

@@ -1,70 +1,145 @@
 ---
 sidebar_position: 6
 title: Settings API
-description: 系统设置接口 — 爬取间隔管理与调度器状态查看
-keywords: [设置, 爬取间隔, 调度器, 定时任务]
+description: System settings management — system info, crawl interval, tools, log level
+keywords: [settings, configuration, crawl interval, tools, log level]
 ---
 
 # Settings API
 
-系统设置管理接口。所有端点均需管理员认证。
+System settings management endpoints. All endpoints require admin authentication. Changes take effect immediately (hot reload) and are persisted to `config.json`.
 
-**路由前缀：** `/api/settings`
-**认证：** 需要 Bearer Token（管理员）
+**Route prefix:** `/api/settings`
+**Authentication:** Bearer Token (admin)
 
 ---
 
-## GET /api/settings/crawl-interval
+## System Info
 
-获取当前的自动爬取间隔配置。
+### GET /api/settings/system-info
 
-### 请求
+Retrieve the system display title and subtitle shown on the public dashboard.
+
+**Request:**
+
+```
+GET /api/settings/system-info
+Authorization: Bearer <token>
+```
+
+**Response (200):**
+
+```json
+{
+  "system_title": "Dungeon Lord",
+  "system_subtitle": "AI-Powered Investment Insights"
+}
+```
+
+**curl:**
+
+```bash
+curl http://localhost:8000/api/settings/system-info \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+### PUT /api/settings/system-info
+
+Update the system display title and subtitle.
+
+**Request:**
+
+```
+PUT /api/settings/system-info
+Content-Type: application/json
+Authorization: Bearer <token>
+```
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `system_title` | `string` | Yes | Main title displayed on the dashboard |
+| `system_subtitle` | `string` | Yes | Subtitle or tagline |
+
+**Example:**
+
+```json
+{
+  "system_title": "Dungeon Lord",
+  "system_subtitle": "Your AI Investment Advisor"
+}
+```
+
+**Response (200):**
+
+```json
+{
+  "system_title": "Dungeon Lord",
+  "system_subtitle": "Your AI Investment Advisor"
+}
+```
+
+**curl:**
+
+```bash
+curl -X PUT http://localhost:8000/api/settings/system-info \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
+  -d '{"system_title": "Dungeon Lord", "system_subtitle": "Your AI Investment Advisor"}'
+```
+
+---
+
+## Crawl Interval
+
+### GET /api/settings/crawl-interval
+
+Get the current automatic crawl interval configuration.
+
+**Request:**
 
 ```
 GET /api/settings/crawl-interval
 Authorization: Bearer <token>
 ```
 
-### 响应
-
-**成功 (200)：**
+**Response (200):**
 
 ```json
 {
   "minutes": 60,
-  "label": "每1小时"
+  "label": "Every 1 hour"
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `minutes` | `integer` | 间隔分钟数。`0` 表示关闭自动爬取 |
-| `label` | `string` | 人类可读的间隔描述 |
+| Field | Type | Description |
+|-------|------|-------------|
+| `minutes` | `integer` | Interval in minutes. `0` disables automatic crawling |
+| `label` | `string` | Human-readable interval description |
 
-**预定义标签：**
+**Predefined Labels:**
 
-| minutes | label |
-|---------|-------|
-| `0` | 关闭 |
-| `1` | 每1分钟 |
-| `30` | 每30分钟 |
-| `60` | 每1小时 |
-| 其他 | 每N分钟 |
+| `minutes` | `label` |
+|-----------|---------|
+| `0` | Off |
+| `1` | Every 1 minute |
+| `30` | Every 30 minutes |
+| `60` | Every 1 hour |
+| Other | Every N minutes |
 
-### curl 示例
+**curl:**
 
 ```bash
 curl http://localhost:8000/api/settings/crawl-interval \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
 ```
 
----
+### PUT /api/settings/crawl-interval
 
-## PUT /api/settings/crawl-interval
+Update the automatic crawl interval. Changes take effect immediately (hot reload) without restarting the server, and are persisted to `config.json`.
 
-更新自动爬取间隔。修改即时生效（热更新），无需重启服务，同时持久化到 `config.json`。
-
-### 请求
+**Request:**
 
 ```
 PUT /api/settings/crawl-interval
@@ -72,13 +147,13 @@ Content-Type: application/json
 Authorization: Bearer <token>
 ```
 
-**请求体：**
+**Request Body:**
 
-| 字段 | 类型 | 必填 | 说明 |
-|------|------|------|------|
-| `minutes` | `integer` | 是 | 间隔分钟数，范围 0-1440。`0` = 关闭 |
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `minutes` | `integer` | Yes | Interval in minutes (range: 0--1440). `0` = disabled |
 
-**请求示例：**
+**Example:**
 
 ```json
 {
@@ -86,22 +161,20 @@ Authorization: Bearer <token>
 }
 ```
 
-### 响应
-
-**成功 (200)：**
+**Response (200):**
 
 ```json
 {
   "minutes": 30,
-  "label": "每30分钟"
+  "label": "Every 30 minutes"
 }
 ```
 
-### 热更新流程
+**Hot Reload Flow:**
 
 ```mermaid
 sequenceDiagram
-    participant Client as 客户端
+    participant Client as Admin Client
     participant API as Settings API
     participant Config as config.json
     participant Scheduler as APScheduler
@@ -109,24 +182,20 @@ sequenceDiagram
     Client->>API: PUT /crawl-interval {"minutes": 30}
     API->>Config: settings.update({"minutes": 30})
     API->>Scheduler: apply_crawl_interval(30)
-    Note over Scheduler: 移除旧任务 → 创建新 IntervalTrigger
-    API-->>Client: {"minutes": 30, "label": "每30分钟"}
+    Note over Scheduler: Remove old job, create new IntervalTrigger
+    API-->>Client: {"minutes": 30, "label": "Every 30 minutes"}
 ```
 
-### curl 示例
-
-设置每 30 分钟自动爬取：
+**curl Examples:**
 
 ```bash
+# Set crawl interval to every 30 minutes
 curl -X PUT http://localhost:8000/api/settings/crawl-interval \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
   -d '{"minutes": 30}'
-```
 
-关闭自动爬取：
-
-```bash
+# Disable automatic crawling
 curl -X PUT http://localhost:8000/api/settings/crawl-interval \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
@@ -135,63 +204,190 @@ curl -X PUT http://localhost:8000/api/settings/crawl-interval \
 
 ---
 
-## GET /api/settings/scheduler
+## Tools Configuration
 
-查看 APScheduler 调度器的运行状态和已注册的任务列表。
+### GET /api/settings/tools
 
-### 请求
+Get the current tool configuration, including whether external tools (e.g., Tavily web search) are enabled.
+
+**Request:**
 
 ```
-GET /api/settings/scheduler
+GET /api/settings/tools
 Authorization: Bearer <token>
 ```
 
-### 响应
-
-**成功 (200)：**
+**Response (200):**
 
 ```json
 {
-  "running": true,
-  "jobs": [
-    {
-      "id": "daily_crawl",
-      "trigger": "cron[hour='8', minute='30']",
-      "next_run": "2024-06-16T08:30:00"
-    },
-    {
-      "id": "interval_crawl",
-      "trigger": "interval[0:30:00]",
-      "next_run": "2024-06-15T11:00:00"
-    }
-  ],
-  "crawl_interval_minutes": 30
+  "enable_tools": true,
+  "tavily_api_key_set": true
 }
 ```
 
-| 字段 | 类型 | 说明 |
-|------|------|------|
-| `running` | `boolean` | 调度器是否正在运行 |
-| `jobs` | `array` | 已注册的任务列表 |
-| `jobs[].id` | `string` | 任务 ID：`daily_crawl`（每日定时）或 `interval_crawl`（间隔循环） |
-| `jobs[].trigger` | `string` | 触发器描述 |
-| `jobs[].next_run` | `string\|null` | 下次执行时间（ISO 8601） |
-| `crawl_interval_minutes` | `integer` | 当前间隔配置（分钟） |
+| Field | Type | Description |
+|-------|------|-------------|
+| `enable_tools` | `boolean` | Whether LLM tool calling is enabled |
+| `tavily_api_key_set` | `boolean` | Whether a Tavily API key is configured (value not exposed) |
 
-### 调度模式
-
-系统支持两种自动爬取调度模式：
-
-| 模式 | 配置项 | 格式 | 说明 |
-|------|--------|------|------|
-| **每日定时** | `crawl_schedule` | `"HH:MM"` | 每天在指定时间执行一次 |
-| **间隔循环** | `crawl_interval_minutes` | 分钟数（0=关闭） | 每隔 N 分钟执行一次 |
-
-两种模式可以同时存在，独立运行。
-
-### curl 示例
+**curl:**
 
 ```bash
-curl http://localhost:8000/api/settings/scheduler \
+curl http://localhost:8000/api/settings/tools \
   -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
 ```
+
+### PUT /api/settings/tools
+
+Update tool configuration.
+
+**Request:**
+
+```
+PUT /api/settings/tools
+Content-Type: application/json
+Authorization: Bearer <token>
+```
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `enable_tools` | `boolean` | Yes | Enable or disable tool calling |
+| `tavily_api_key` | `string` | No | Tavily API key (omit to keep existing) |
+
+**Example:**
+
+```json
+{
+  "enable_tools": true,
+  "tavily_api_key": "tvly-xxxxxxxxxxxx"
+}
+```
+
+**Response (200):**
+
+```json
+{
+  "enable_tools": true,
+  "tavily_api_key_set": true
+}
+```
+
+**curl:**
+
+```bash
+curl -X PUT http://localhost:8000/api/settings/tools \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
+  -d '{"enable_tools": true, "tavily_api_key": "tvly-xxxxxxxxxxxx"}'
+```
+
+---
+
+## Log Level
+
+### GET /api/settings/log-level
+
+Get the current application log level.
+
+**Request:**
+
+```
+GET /api/settings/log-level
+Authorization: Bearer <token>
+```
+
+**Response (200):**
+
+```json
+{
+  "level": "info"
+}
+```
+
+**Valid Log Levels:**
+
+| Level | Description |
+|-------|-------------|
+| `debug` | Verbose output for development |
+| `info` | Standard operational messages (default) |
+| `warning` | Warnings only |
+| `error` | Errors only |
+| `critical` | Critical errors only |
+
+**curl:**
+
+```bash
+curl http://localhost:8000/api/settings/log-level \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+### PUT /api/settings/log-level
+
+Update the application log level. Takes effect immediately.
+
+**Request:**
+
+```
+PUT /api/settings/log-level
+Content-Type: application/json
+Authorization: Bearer <token>
+```
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `level` | `string` | Yes | One of: `debug`, `info`, `warning`, `error`, `critical` |
+
+**Example:**
+
+```json
+{
+  "level": "debug"
+}
+```
+
+**Response (200):**
+
+```json
+{
+  "level": "debug"
+}
+```
+
+**curl:**
+
+```bash
+curl -X PUT http://localhost:8000/api/settings/log-level \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..." \
+  -d '{"level": "debug"}'
+```
+
+---
+
+## Settings Update Flow
+
+All `PUT` endpoints follow the same update pattern:
+
+```mermaid
+flowchart TD
+    A[Admin sends PUT request] --> B[Validate input]
+    B -->|Invalid| C[Return 422 Validation Error]
+    B -->|Valid| D[Update in-memory settings]
+    D --> E[Persist to config.json]
+    E --> F{Needs side effect?}
+    F -->|Crawl interval| G[Reschedule APScheduler job]
+    F -->|Log level| H[Update Python logger level]
+    F -->|Other| I[No action needed]
+    G --> J[Return updated value]
+    H --> J
+    I --> J
+```
+
+:::note Hot Reload
+All settings changes are applied immediately without requiring a server restart. The in-memory state is updated first, then persisted to `config.json` for durability across restarts.
+:::

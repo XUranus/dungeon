@@ -1,61 +1,68 @@
 ---
 sidebar_position: 1
-title: "系统架构概览"
-description: "Dungeon Lord 全栈 RAG 问答系统整体架构设计"
+title: "Architecture Overview"
+description: "High-level architecture of the Dungeon Lord full-stack RAG Q&A system"
 ---
 
-# 系统架构概览
+# Architecture Overview
 
-Dungeon Lord 是一套面向财经领域大V观点分析的 RAG（Retrieval-Augmented Generation）问答系统。系统自动从知乎、知识星球等平台采集目标作者的公开内容，经过文本预处理、语义切分、向量化后存入向量数据库，最终通过混合检索 + LLM 流式生成为用户提供智能问答服务。
+Dungeon Lord is a financial KOL (Key Opinion Leader) opinion analysis and RAG (Retrieval-Augmented Generation) Q&A system. It automatically crawls public content from platforms like Zsxq (知识星球) and Zhihu (知乎), processes text through cleaning, semantic chunking, and vectorization, stores embeddings in a vector database, and delivers intelligent Q&A via hybrid retrieval combined with LLM streaming generation.
 
-## 高层架构
+## High-Level Architecture
 
 ```mermaid
 graph TB
-    subgraph Frontend ["前端 (React + Tailwind CSS)"]
-        Dashboard["公共大屏<br/>DashboardPage"]
-        Login["登录页<br/>LoginPage"]
-        Chat["问答面板<br/>ChatPanel"]
-        Topics["数据浏览<br/>TopicsPage"]
-        Sources["数据采集<br/>SourcesPage"]
-        Settings["系统设置<br/>SettingsPage"]
+    subgraph Frontend ["Frontend — React + Tailwind CSS"]
+        Dashboard["Public Dashboard<br/>DashboardPage"]
+        Login["Login Page<br/>LoginPage"]
+        Chat["Q&A Panel<br/>ChatPanel"]
+        Topics["Data Browser<br/>TopicsPage"]
+        Sources["Crawl Manager<br/>SourcesPage"]
+        Settings["System Settings<br/>SettingsPage"]
     end
 
-    subgraph Backend ["后端 (FastAPI)"]
-        AuthRouter["/api/auth<br/>JWT 认证"]
-        ChatRouter["/api/chat<br/>管理员问答"]
-        DashboardRouter["/api/dashboard<br/>公共大屏 + 受限问答"]
-        TopicsRouter["/api/topics<br/>主题 CRUD"]
-        SourcesRouter["/api/sources<br/>爬取任务管理"]
-        SettingsRouter["/api/settings<br/>配置管理"]
-        ProxyRouter["/api/proxy<br/>图片代理"]
+    subgraph Backend ["Backend — FastAPI"]
+        AuthRouter["/api/auth<br/>JWT Authentication"]
+        ChatRouter["/api/chat<br/>Admin RAG Q&A"]
+        DashboardRouter["/api/dashboard<br/>Public Dashboard + Rate-limited Q&A"]
+        TopicsRouter["/api/topics<br/>Topic CRUD"]
+        SourcesRouter["/api/sources<br/>Crawl Task Management"]
+        SettingsRouter["/api/settings<br/>Configuration"]
+        HoldingsRouter["/api/holdings<br/>Recommended Holdings"]
+        ProfRouter["/api/professor-index<br/>Professor Index Parsing"]
+        ProxyRouter["/api/proxy<br/>Image Proxy"]
     end
 
-    subgraph Services ["核心服务层"]
-        RAG["rag.py<br/>RAG 引擎"]
+    subgraph Services ["Core Services"]
+        RAG["rag.py<br/>RAG Engine"]
         Hybrid["hybrid_retriever.py<br/>Dense + BM25 + RRF"]
-        Embed["embedding.py<br/>向量化服务"]
-        VecStore["vectorstore.py<br/>ChromaDB 封装"]
-        Ingest["ingestion.py<br/>数据采集 + 入库"]
-        Sched["scheduler.py<br/>APScheduler 定时任务"]
+        Embed["embedding.py<br/>Vectorization Service"]
+        VecStore["vectorstore.py<br/>ChromaDB Wrapper"]
+        Ingest["ingestion.py<br/>Crawl + Preprocess + Store"]
+        ProfIndex["professor_index.py<br/>Professor Index Parser"]
+        Tools["tools.py<br/>Web Search + Stock Tools"]
+        Sched["scheduler.py<br/>APScheduler Cron/Interval"]
     end
 
-    subgraph Storage ["存储层"]
+    subgraph Storage ["Storage Layer"]
         SQLite[("SQLite<br/>app.db")]
-        ChromaDB[("ChromaDB<br/>向量数据库")]
+        ChromaDB[("ChromaDB<br/>Vector Database")]
     end
 
-    subgraph External ["外部服务"]
-        ZSXQ["知识星球 API"]
-        Zhihu["知乎 API"]
-        OpenAI["OpenAI API / 兼容接口"]
-        LocalBGE["本地 bge-small-zh-v1.5"]
+    subgraph External ["External Services"]
+        ZSXQ["Zsxq API"]
+        Zhihu["Zhihu API"]
+        OpenAI["OpenAI API / Compatible"]
+        LocalBGE["Local bge-small-zh-v1.5"]
+        Tavily["Tavily Search API"]
+        YFinance["yfinance<br/>Stock Quotes"]
     end
 
     Frontend -->|"HTTP / SSE"| Backend
     Backend --> Services
     RAG --> Hybrid
     RAG --> OpenAI
+    RAG --> Tools
     Hybrid --> VecStore
     Embed --> OpenAI
     Embed --> LocalBGE
@@ -64,51 +71,62 @@ graph TB
     VecStore --> ChromaDB
     Ingest --> ZSXQ
     Ingest --> Zhihu
+    ProfIndex --> ZSXQ
+    ProfIndex --> OpenAI
+    Tools --> Tavily
+    Tools --> YFinance
     Sched --> Ingest
+    Sched --> ProfIndex
 ```
 
-## 两角色模型
+## Two-Role Model
 
-系统采用简洁的两角色权限模型，区分公共访客和管理员：
+The system uses a simple two-role permission model, distinguishing between public visitors and administrators:
 
 ```mermaid
 graph LR
-    subgraph Public ["公共访客"]
-        P1["浏览最新观点摘要"]
-        P2["受限 AI 问答<br/>（每日 10 次，IP 限流）"]
+    subgraph Public ["Public Visitor"]
+        P1["Browse latest opinion summaries"]
+        P2["Rate-limited AI Q&A<br/>(daily IP quota)"]
+        P3["View Professor Index"]
+        P4["View Recommended Holdings"]
     end
 
-    subgraph Admin ["管理员"]
-        A1["完整 AI 问答<br/>（无次数限制）"]
-        A2["数据浏览 / 搜索"]
-        A3["触发爬取任务"]
-        A4["系统配置管理"]
-        A5["查看爬取历史"]
+    subgraph Admin ["Administrator"]
+        A1["Unlimited AI Q&A"]
+        A2["Data browsing & search"]
+        A3["Trigger crawl tasks"]
+        A4["System configuration"]
+        A5["Professor Index parsing"]
+        A6["Manage holdings"]
     end
 
-    Public -->|"无需登录"| DashboardPage
-    Admin -->|"JWT 认证"| AdminPages["/admin/*"]
+    Public -->|"No login required"| DashboardPage["DashboardPage"]
+    Admin -->|"JWT authentication"| AdminPages["/admin/*"]
 ```
 
-| 能力 | 公共访客 | 管理员 |
-|------|---------|--------|
-| 查看观点摘要 | 是 | 是 |
-| AI 问答 | 受限（IP 每日上限） | 无限制 |
-| 数据浏览与搜索 | 否 | 是 |
-| 触发爬取任务 | 否 | 是 |
-| 系统设置 | 否 | 是 |
+| Capability | Public Visitor | Administrator |
+|-----------|---------------|---------------|
+| View opinion summaries | Yes | Yes |
+| AI Q&A | Rate-limited (IP daily cap) | Unlimited |
+| View Professor Index | Yes | Yes |
+| View recommended holdings | Yes | Yes |
+| Data browsing and search | No | Yes |
+| Trigger crawl tasks | No | Yes |
+| Professor Index parsing | No | Yes |
+| System settings | No | Yes |
 
-## 关键设计决策
+## Key Design Decisions
 
-### SSE 流式响应
+### SSE Streaming
 
-所有问答接口采用 **Server-Sent Events (SSE)** 流式返回，而非一次性返回完整响应：
+All Q&A endpoints use **Server-Sent Events (SSE)** for real-time streaming instead of returning complete responses:
 
-- **后端**：使用 `StreamingResponse` 以 `text/event-stream` 媒体类型逐 token 推送
-- **前端**：通过 `ReadableStream` reader 逐行解析 `data:` 前缀的事件行
-- **终止信号**：`data: [DONE]\n\n` 标记流结束
+- **Backend**: Uses `StreamingResponse` with `text/event-stream` media type, pushing tokens incrementally.
+- **Frontend**: Parses `data:` prefixed event lines via `ReadableStream` reader.
+- **Termination signal**: `data: [DONE]\n\n` marks the end of the stream.
 
-参考后端实现（`backend/app/routers/chat.py`）：
+Reference implementation from `backend/app/routers/chat.py`:
 
 ```python
 async def event_stream():
@@ -123,23 +141,23 @@ return StreamingResponse(
 )
 ```
 
-### JWT 认证
+### JWT Authentication
 
-管理员通过密码登录获取 JWT Token，前端将其存储在 `localStorage` 并附加到请求头：
+Administrators obtain a JWT token via password login. The frontend stores it in `localStorage` and attaches it to subsequent requests:
 
-- 算法：HS256
-- 有效期：可配置（默认 24 小时）
-- 依赖注入：`get_current_admin`（强制认证）和 `optional_admin`（可选认证）
+- **Algorithm**: HS256
+- **Expiration**: Configurable (default 24 hours)
+- **Dependency injection**: `get_current_admin` (mandatory) and `optional_admin` (optional)
 
-### IP 级速率限制
+### IP-Level Rate Limiting
 
-公共问答接口基于客户端 IP 进行每日配额限制：
+The public Q&A endpoint enforces a per-client-IP daily quota:
 
-- 存储：内存字典 `_chat_usage: dict[str, dict[str, int]]`
-- 限制：可配置的 `public_chat_daily_limit`（默认 10 次/天）
-- 超限返回 HTTP 429
+- **Storage**: In-memory dictionary `_chat_usage: dict[str, dict[str, int]]`
+- **Limit**: Configurable `public_chat_daily_limit` (default 10 requests/day)
+- **Response on excess**: HTTP 429 Too Many Requests
 
-## 组件关系图
+## Component Relationship Diagram
 
 ```mermaid
 classDiagram
@@ -163,7 +181,24 @@ classDiagram
         +GET /api/dashboard/summary
         +POST /api/dashboard/chat
         +GET /api/dashboard/chat-remaining
+        +GET /api/dashboard/holdings
+        +GET /api/dashboard/professor-index
         -rate_limit: IP daily limit
+    }
+
+    class HoldingsRouter {
+        +GET /api/holdings
+        +POST /api/holdings/generate
+        +DELETE /api/holdings/{id}
+        -requires: get_current_admin
+    }
+
+    class ProfessorIndexRouter {
+        +POST /api/professor-index/parse
+        +GET /api/professor-index/parse/status
+        +GET /api/professor-index/parse/history
+        +PUT /api/professor-index/interval
+        -requires: get_current_admin
     }
 
     class RAGEngine {
@@ -198,6 +233,17 @@ classDiagram
         +_embed_new_content()
     }
 
+    class ToolsService {
+        +web_search()
+        +get_stock_quote()
+        +get_market_overview()
+    }
+
+    class ProfessorIndexService {
+        +parse_snapshots_from_zsxq()
+        +run_parse_task()
+    }
+
     class SchedulerService {
         +setup_scheduler()
         +shutdown_scheduler()
@@ -207,112 +253,147 @@ classDiagram
     FastAPI_App --> AuthRouter
     FastAPI_App --> ChatRouter
     FastAPI_App --> DashboardRouter
+    FastAPI_App --> HoldingsRouter
+    FastAPI_App --> ProfessorIndexRouter
     ChatRouter --> RAGEngine
     DashboardRouter --> RAGEngine
     RAGEngine --> HybridRetriever
     RAGEngine --> EmbeddingService
+    RAGEngine --> ToolsService
     HybridRetriever --> VectorStore
     IngestionService --> EmbeddingService
     IngestionService --> VectorStore
+    ProfessorIndexService --> IngestionService
     SchedulerService --> IngestionService
+    SchedulerService --> ProfessorIndexService
 ```
 
-## 项目目录结构
+## Project Directory Structure
 
 ```
 dungeon-lord/
-├── backend/                        # 后端 Python 项目
+├── backend/                        # Python backend project
 │   ├── app/
 │   │   ├── __init__.py
-│   │   ├── main.py                 # FastAPI 入口，lifespan，路由注册
-│   │   ├── config.py               # 配置管理（单例，热更新）
-│   │   ├── database.py             # SQLAlchemy async engine + session
-│   │   ├── models.py               # ORM 模型：Topic, Comment, CrawlTask, SemanticChunk
-│   │   ├── auth.py                 # JWT 认证：create_token, get_current_admin
-│   │   ├── routers/                # API 路由层
-│   │   │   ├── auth.py             # /api/auth - 登录 / token 验证
-│   │   │   ├── chat.py             # /api/chat - 管理员 RAG 问答（SSE）
-│   │   │   ├── dashboard.py        # /api/dashboard - 公共大屏 + 受限问答
-│   │   │   ├── topics.py           # /api/topics - 主题数据 CRUD
-│   │   │   ├── sources.py          # /api/sources - 爬取任务管理
-│   │   │   ├── settings.py         # /api/settings - 配置读写
-│   │   │   └── proxy.py            # /api/proxy - 图片防盗链代理
-│   │   ├── services/               # 核心业务逻辑
-│   │   │   ├── rag.py              # RAG 问答引擎（SSE 流式）
-│   │   │   ├── hybrid_retriever.py # 混合检索：BM25 + Dense + RRF
-│   │   │   ├── embedding.py        # Embedding 服务（OpenAI / 本地 BGE）
-│   │   │   ├── vectorstore.py      # ChromaDB 向量存储封装
-│   │   │   ├── ingestion.py        # 数据采集 + 预处理 + 入库
-│   │   │   └── task_manager.py     # 后台任务管理
-│   │   ├── crawlers/               # 平台爬虫
-│   │   │   ├── base.py             # 爬虫抽象基类
-│   │   │   ├── zsxq.py             # 知识星球爬虫
-│   │   │   └── zhihu.py            # 知乎爬虫
-│   │   └── utils/                  # 工具模块
-│   │       ├── text.py             # 文本切分（chunk_size=500, overlap=80）
-│   │       └── scheduler.py        # APScheduler 定时任务
-│   ├── config.json                 # 运行时配置（git ignored）
-│   ├── config.example.json         # 配置模板
-│   └── pyproject.toml              # Python 依赖声明
+│   │   ├── main.py                 # FastAPI entry point, lifespan, router registration
+│   │   ├── config.py               # Configuration singleton with hot-reload from config.json
+│   │   ├── database.py             # SQLAlchemy async engine + session factory
+│   │   ├── models.py               # ORM models: Topic, Comment, CrawlTask, SemanticChunk,
+│   │   │                           #   RecommendedHolding, ProfessorIndexSnapshot, etc.
+│   │   ├── schemas.py              # Pydantic request/response schemas
+│   │   ├── auth.py                 # JWT auth: create_token, verify_token, get_current_admin
+│   │   ├── routers/                # API route layer
+│   │   │   ├── auth.py             # /api/auth — login / token verification
+│   │   │   ├── chat.py             # /api/chat — admin RAG Q&A (SSE)
+│   │   │   ├── dashboard.py        # /api/dashboard — public dashboard + rate-limited Q&A
+│   │   │   ├── topics.py           # /api/topics — topic data CRUD
+│   │   │   ├── sources.py          # /api/sources — crawl task management
+│   │   │   ├── settings.py         # /api/settings — configuration read/write
+│   │   │   ├── holdings.py         # /api/holdings — recommended holdings management
+│   │   │   ├── professor_index.py  # /api/professor-index — parse tasks + interval config
+│   │   │   └── proxy.py            # /api/proxy — anti-hotlink image proxy
+│   │   ├── services/               # Core business logic
+│   │   │   ├── rag.py              # RAG Q&A engine (SSE streaming)
+│   │   │   ├── hybrid_retriever.py # Hybrid retrieval: BM25 + Dense + RRF
+│   │   │   ├── embedding.py        # Embedding service (OpenAI / local BGE)
+│   │   │   ├── vectorstore.py      # ChromaDB vector storage wrapper
+│   │   │   ├── ingestion.py        # Data crawl + preprocess + store pipeline
+│   │   │   ├── professor_index.py  # Professor Index multimodal LLM parsing
+│   │   │   ├── holdings_generator.py # AI-generated recommended holdings
+│   │   │   ├── tools.py            # Tool-calling: web search, stock quotes
+│   │   │   ├── llm_client.py       # OpenAI-compatible LLM client
+│   │   │   ├── task_manager.py     # Background task management
+│   │   │   └── audit.py            # Audit logging
+│   │   ├── crawlers/               # Platform crawlers
+│   │   │   ├── base.py             # Abstract base crawler
+│   │   │   ├── zsxq.py             # Zsxq (知识星球) crawler
+│   │   │   └── zhihu.py            # Zhihu (知乎) crawler
+│   │   └── utils/                  # Utility modules
+│   │       ├── text.py             # Text chunking (chunk_size=500, overlap=80)
+│   │       ├── streaming.py        # SSE streaming helpers
+│   │       └── scheduler.py        # APScheduler setup
+│   ├── scripts/
+│   │   └── migrate_zsxq_xml.py     # Data migration script
+│   ├── config.json                 # Runtime configuration (git-ignored)
+│   ├── config.example.json         # Configuration template
+│   └── pyproject.toml              # Python dependency declarations
 │
-├── frontend/                       # 前端 React 项目
+├── frontend/                       # React frontend project
 │   ├── src/
-│   │   ├── main.tsx                # 入口
-│   │   ├── App.tsx                 # 路由定义
-│   │   ├── index.css               # Tailwind + glassmorphism 工具类
-│   │   ├── pages/                  # 页面组件
-│   │   │   ├── DashboardPage.tsx   # 公共大屏（观点摘要 + 受限问答）
-│   │   │   ├── LoginPage.tsx       # 管理员登录
-│   │   │   ├── ChatPage.tsx        # 管理员问答页
-│   │   │   ├── TopicsPage.tsx      # 数据浏览
-│   │   │   ├── SourcesPage.tsx     # 数据采集管理
-│   │   │   └── SettingsPage.tsx    # 系统设置
-│   │   ├── components/             # 可复用组件
+│   │   ├── main.tsx                # Entry point
+│   │   ├── App.tsx                 # Route definitions
+│   │   ├── index.css               # Tailwind + glassmorphism utility classes
+│   │   ├── pages/                  # Page components
+│   │   │   ├── DashboardPage.tsx   # Public dashboard (opinions + rate-limited Q&A)
+│   │   │   ├── LoginPage.tsx       # Admin login
+│   │   │   ├── ChatPage.tsx        # Admin Q&A page
+│   │   │   ├── TopicsPage.tsx      # Data browser
+│   │   │   ├── SourcesPage.tsx     # Crawl management
+│   │   │   └── SettingsPage.tsx    # System settings
+│   │   ├── components/             # Reusable components
 │   │   │   ├── auth/ProtectedRoute.tsx
 │   │   │   ├── chat/ChatPanel.tsx
 │   │   │   ├── chat/ChatHistoryPanel.tsx
 │   │   │   ├── chat/MarkdownMessage.tsx
+│   │   │   ├── chat/CopyButton.tsx
 │   │   │   ├── content/QAContent.tsx
 │   │   │   ├── content/RichContent.tsx
 │   │   │   ├── content/ImageGallery.tsx
-│   │   │   └── layout/Sidebar.tsx
-│   │   ├── contexts/               # React Context
-│   │   │   ├── AuthContext.tsx      # 认证状态管理
-│   │   │   └── ThemeContext.tsx     # 暗色模式管理
+│   │   │   ├── layout/Sidebar.tsx
+│   │   │   ├── DonutChart.tsx
+│   │   │   ├── Logo.tsx
+│   │   │   └── ErrorBoundary.tsx
+│   │   ├── contexts/               # React Context providers
+│   │   │   ├── AuthContext.tsx      # Authentication state management
+│   │   │   └── ThemeContext.tsx     # Dark mode management
 │   │   ├── services/
-│   │   │   └── api.ts              # HTTP 请求封装
+│   │   │   └── api.ts              # HTTP request wrapper
 │   │   ├── utils/
-│   │   │   ├── sse.ts              # SSE 流读取工具
-│   │   │   └── chatHistory.ts      # 对话历史 localStorage 管理
+│   │   │   ├── sse.ts              # SSE stream reader utility
+│   │   │   ├── chatHistory.ts      # Chat session localStorage persistence
+│   │   │   └── visitor.ts          # Public visitor ID management
 │   │   └── types/
-│   │       └── index.ts            # TypeScript 类型定义
+│   │       └── index.ts            # TypeScript type definitions
 │   ├── package.json
 │   └── vite.config.ts
 │
-├── data/                           # 运行时数据（git ignored）
-│   ├── app.db                      # SQLite 数据库
-│   └── chroma/                     # ChromaDB 持久化目录
+├── data/                           # Runtime data (git-ignored)
+│   ├── app.db                      # SQLite database
+│   └── chroma/                     # ChromaDB persistence directory
 │
-├── scripts/                        # 辅助脚本
-│   ├── zhihu_crawl_answers.js
-│   └── zhihu_sign.js
+├── docs/                           # Docusaurus documentation site
+│   ├── docs/
+│   │   ├── architecture/           # Architecture documentation
+│   │   ├── features/               # Feature documentation
+│   │   ├── rag/                    # RAG system documentation
+│   │   ├── api/                    # API reference
+│   │   ├── guides/                 # Getting started guides
+│   │   └── advanced/               # Advanced topics
+│   ├── src/
+│   ├── docusaurus.config.ts
+│   └── sidebars.ts
 │
-└── package.json                    # monorepo 根 package.json
+└── package.json                    # Monorepo root package.json
 ```
 
-## 技术栈总览
+## Technology Stack
 
-| 层级 | 技术选型 | 说明 |
-|------|---------|------|
-| 前端框架 | React 19 + TypeScript | SPA，Vite 构建 |
-| 样式方案 | Tailwind CSS v4 | 自定义 glassmorphism 工具类 |
-| 路由 | react-router-dom v7 | 嵌套路由，ProtectedRoute 鉴权 |
-| Markdown 渲染 | react-markdown v10 + remark-gfm | 聊天消息渲染 |
-| 图标库 | lucide-react | 轻量级图标 |
-| 后端框架 | FastAPI | 异步 Python Web 框架 |
-| ORM | SQLAlchemy 2 (async) | aiosqlite 驱动 |
-| 向量数据库 | ChromaDB | 持久化存储，HNSW cosine 空间 |
-| Embedding | OpenAI API / bge-small-zh-v1.5 | 双模式可切换 |
-| 任务调度 | APScheduler | Cron + Interval 两种触发器 |
-| 认证 | python-jose (JWT) | HS256 算法 |
-| 爬虫 | httpx (async HTTP) | 支持重试、限流、增量爬取 |
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| Frontend framework | React 19 + TypeScript | SPA with function components and Hooks |
+| Build tool | Vite 8 | Development server, optimized production builds |
+| CSS framework | Tailwind CSS v4 | Utility-first styling with custom glassmorphism classes |
+| Client-side routing | react-router-dom v7 | Nested routes, `ProtectedRoute` for admin guard |
+| Markdown rendering | react-markdown v10 + remark-gfm | Chat message rendering with GFM support |
+| Icon library | lucide-react | Lightweight icon set |
+| Backend framework | FastAPI | Async Python web framework with auto-generated OpenAPI docs |
+| ORM | SQLAlchemy 2 (async) | `aiosqlite` driver, mapped columns, relationship loading |
+| Vector database | ChromaDB | Persistent HNSW cosine-space vector index |
+| Embedding (remote) | OpenAI API | `text-embedding-3-small` (1536-dim) |
+| Embedding (local) | sentence-transformers | `bge-small-zh-v1.5` (512-dim), Chinese-optimized |
+| Sparse retrieval | rank-bm25 | BM25Okapi with n-gram tokenization |
+| LLM | OpenAI-compatible API | Streaming chat completions, `temperature=0.3` |
+| Task scheduling | APScheduler | Cron + interval triggers via `AsyncIOScheduler` |
+| Authentication | python-jose (JWT) | HS256 algorithm, configurable expiration |
+| HTTP client (crawlers) | httpx | Async HTTP with retry, rate limiting, incremental crawling |
+| Tools | Tavily, yfinance | Web search and stock quote retrieval for LLM tool-calling |

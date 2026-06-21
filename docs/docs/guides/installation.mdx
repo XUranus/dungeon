@@ -1,58 +1,64 @@
 ---
 sidebar_position: 2
-title: 安装指南
-description: 从零开始搭建 Dungeon Lord 开发环境
-keywords: [安装, Python, Node.js, 环境配置]
+title: Installation Guide
+description: Setting up Dungeon Lord development environment from scratch
+keywords: [installation, Python, Node.js, environment setup]
 ---
 
-# 安装指南
+# Installation Guide
 
-本指南将帮助你从零开始搭建 Dungeon Lord 的本地开发环境。
+This guide walks you through setting up a local development environment for
+Dungeon Lord from scratch.
 
-## 环境要求
+---
 
-在开始之前，请确保你的系统已安装以下软件：
+## Requirements
 
-| 软件 | 最低版本 | 检查命令 | 说明 |
-|------|---------|---------|------|
-| **Python** | 3.11+ | `python --version` | 后端运行时 |
-| **Node.js** | 18+ | `node --version` | 前端构建与开发 |
-| **npm** | 9+ | `npm --version` | 随 Node.js 一同安装 |
-| **Git** | 2.30+ | `git --version` | 版本控制 |
+Before you begin, make sure the following software is installed on your system:
+
+| Software | Minimum Version | Check Command | Notes |
+|----------|----------------|---------------|-------|
+| **Python** | 3.11+ | `python --version` | Backend runtime |
+| **Node.js** | 18+ | `node --version` | Frontend dev server & build |
+| **npm** | 9+ | `npm --version` | Bundled with Node.js |
+| **Git** | 2.30+ | `git --version` | Version control |
 
 :::tip
-推荐使用 [pyenv](https://github.com/pyenv/pyenv) 管理 Python 版本，[nvm](https://github.com/nvm-sh/nvm) 管理 Node.js 版本。
+We recommend managing Python versions with [pyenv](https://github.com/pyenv/pyenv)
+and Node.js versions with [nvm](https://github.com/nvm-sh/nvm). This makes it easy
+to switch between projects without conflicts.
 :::
 
-## 项目目录结构
+---
 
-下图展示了克隆后的项目目录布局及其用途：
+## Directory Layout
+
+The diagram below shows the structure you will have after cloning the repository:
 
 ```mermaid
 graph TD
     Root["dungeon-lord/"] --> Backend["backend/"]
     Root --> Frontend["frontend/"]
     Root --> Docs["docs/"]
-    Root --> Scripts["scripts/"]
+    Root --> Data["data/ (auto-created)"]
 
     Backend --> App["app/"]
-    Backend --> Alembic["alembic/"]
     Backend --> ConfigEx["config.example.json"]
     Backend --> Pyproject["pyproject.toml"]
-    Backend --> Venv[".venv/ (自动生成)"]
+    Backend --> Venv[".venv/ (created during setup)"]
 
-    App --> Routers["routers/ — API 路由"]
-    App --> Services["services/ — 业务逻辑"]
-    App --> Crawlers["crawlers/ — 爬虫"]
-    App --> Utils["utils/ — 工具函数"]
-    App --> ConfigPy["config.py — 配置管理"]
-    App --> Models["models.py — 数据库模型"]
+    App --> Routers["routers/ — API routes"]
+    App --> Services["services/ — business logic"]
+    App --> Crawlers["crawlers/ — platform scrapers"]
+    App --> Utils["utils/ — helpers"]
+    App --> ConfigPy["config.py — config management"]
+    App --> Models["models.py — DB models"]
 
     Frontend --> Src["src/"]
-    Src --> Pages["pages/ — 页面"]
-    Src --> Components["components/ — 组件"]
-    Src --> Contexts["contexts/ — 状态管理"]
-    Src --> ServicesFE["services/ — API 调用"]
+    Src --> Pages["pages/ — route pages"]
+    Src --> Components["components/ — UI components"]
+    Src --> Contexts["contexts/ — state management"]
+    Src --> ServicesFE["services/ — API calls"]
 
     style Root fill:#f5f5f5,stroke:#616161
     style Backend fill:#fff3e0,stroke:#f57c00
@@ -60,188 +66,243 @@ graph TD
     style Docs fill:#f3e5f5,stroke:#7b1fa2
 ```
 
-## 第一步：克隆仓库
+---
+
+## Step 1: Clone the Repository
 
 ```bash
 git clone https://github.com/your-org/dungeon-lord.git
 cd dungeon-lord
 ```
 
-## 第二步：后端设置
+---
 
-### 创建 Python 虚拟环境
+## Step 2: Backend Setup
+
+### Create a Python Virtual Environment
 
 ```bash
 cd backend
 
-# 创建虚拟环境
+# Create the virtual environment
 python -m venv .venv
 
-# 激活虚拟环境
+# Activate it
 # macOS / Linux:
 source .venv/bin/activate
 # Windows:
 # .venv\Scripts\activate
 
-# 确认 Python 版本
+# Verify the Python version
 python --version
-# 应输出 Python 3.11.x 或更高
+# Should print Python 3.11.x or higher
 ```
 
-### 安装依赖
+### Install Dependencies
 
-使用 `pip install -e .` 以可编辑模式安装，便于开发调试：
+Install the project in editable mode so that code changes take effect immediately:
 
 ```bash
 pip install -e .
 ```
 
-这将安装 `pyproject.toml` 中声明的所有依赖：
+This reads `pyproject.toml` and installs all runtime dependencies:
 
-| 依赖包 | 用途 |
-|--------|------|
-| `fastapi` | Web 框架 |
-| `uvicorn` | ASGI 服务器 |
-| `sqlalchemy[asyncio]` | 异步 ORM |
-| `aiosqlite` | SQLite 异步驱动 |
-| `alembic` | 数据库迁移 |
-| `chromadb` | 向量数据库 |
-| `openai` | LLM API 客户端 |
-| `httpx` | 异步 HTTP 客户端 |
-| `rank-bm25` | BM25 检索算法 |
-| `sentence-transformers` | 本地嵌入模型（可选） |
-| `playwright` | 浏览器自动化爬虫 |
-| `apscheduler` | 定时任务调度 |
-| `python-jose` | JWT 令牌 |
-| `beautifulsoup4` | HTML 解析 |
-| `sse-starlette` | SSE 流式响应 |
+| Package | Purpose |
+|---------|---------|
+| `fastapi` (>= 0.115.0) | Async web framework |
+| `uvicorn[standard]` | ASGI server with auto-reload |
+| `sqlalchemy[asyncio]` (>= 2.0.0) | Async ORM |
+| `aiosqlite` | SQLite async driver |
+| `alembic` | Database schema migrations |
+| `chromadb` (>= 0.5.0) | Vector database |
+| `openai` (>= 1.50.0) | LLM & embedding API client |
+| `httpx` | Async HTTP client for crawlers |
+| `rank-bm25` | BM25 keyword retrieval |
+| `sentence-transformers` | Local embedding models (optional) |
+| `beautifulsoup4` | HTML parsing & text extraction |
+| `sse-starlette` | Server-Sent Events for streaming |
+| `apscheduler` | Periodic crawl scheduling |
+| `python-jose[cryptography]` | JWT token creation & verification |
+| `playwright` | Browser automation (Zhihu fallback) |
+| `yfinance` | Stock data lookup for tool calling |
 
 :::info
-如需本地嵌入模型（bge-small-zh-v1.5），首次运行时系统会自动从 HuggingFace 下载模型文件。如果网络受限，可配置 `hf_mirror_url` 使用国内镜像。
+If you plan to use the local embedding model (`bge-small-zh-v1.5`), the model
+weights will be downloaded automatically from HuggingFace on first use. If you
+are in China, configure `hf_mirror_url` to use the domestic mirror
+(`https://hf-mirror.com`) — see the [Configuration Reference](./configuration).
 :::
 
-### 安装开发依赖（可选）
+### Install Development Dependencies (Optional)
 
 ```bash
 pip install -e ".[dev]"
 ```
 
-额外安装 `pytest` 和 `pytest-asyncio`，用于运行测试。
+This additionally installs `pytest` and `pytest-asyncio` for running the test suite.
 
-## 第三步：前端设置
+---
+
+## Step 3: Frontend Setup
 
 ```bash
 cd frontend
 
-# 安装依赖
+# Install all Node.js dependencies
 npm install
 ```
 
-前端使用以下核心技术：
+The frontend relies on the following key packages:
 
-| 依赖 | 用途 |
-|------|------|
-| `react` + `react-dom` | UI 框架 |
-| `react-router-dom` | 路由管理 |
-| `tailwindcss` | 原子化 CSS |
-| `@tanstack/react-query` | 数据请求与缓存 |
-| `react-markdown` + `remark-gfm` | Markdown 渲染 |
-| `lucide-react` | 图标库 |
-| `vite` | 构建工具 |
+| Package | Purpose |
+|---------|---------|
+| `react` + `react-dom` (19.x) | UI framework |
+| `react-router-dom` (7.x) | Client-side routing |
+| `tailwindcss` (4.x) | Utility-first CSS |
+| `@tanstack/react-query` | Server-state management & caching |
+| `react-markdown` + `remark-gfm` | Markdown rendering for LLM output |
+| `lucide-react` | Icon library |
+| `vite` (8.x) | Dev server & production bundler |
+| `typescript` (6.x) | Type safety |
 
-## 第四步：配置文件
+---
 
-### 复制配置模板
+## Step 4: Configuration
+
+### Copy the Template
 
 ```bash
 cd backend
 cp config.example.json config.json
 ```
 
-### 编辑配置
+### Edit Required Fields
 
-使用你喜欢的编辑器打开 `config.json`：
+Open `config.json` in your editor and fill in the following **mandatory** fields:
 
 ```json title="backend/config.json"
 {
   "openai_api_key": "sk-your-api-key-here",
-  "openai_base_url": "",
-  "openai_model": "gpt-4o",
-
-  "embedding_provider": "openai",
-  "embedding_model": "text-embedding-3-small",
-
-  "author_name": "目标KOL的名字",
-
-  "zsxq_cookie": "",
-  "zsxq_group_id": "",
-
-  "zhihu_cookie": "",
-  "zhihu_url_token": "",
-
-  "admin_password": "your-admin-password",
-  "jwt_secret": "change-me-to-a-random-string",
-
-  "api_host": "0.0.0.0",
-  "api_port": 8000
+  "admin_password": "choose-a-strong-password",
+  "jwt_secret": "replace-with-a-random-string"
 }
 ```
 
-### 必填配置项
+:::warning
+The default `jwt_secret` value (`change-me-to-a-random-string`) is insecure.
+Generate a strong secret with:
 
-以下是系统启动前 **必须** 填写的配置项：
-
-| 配置项 | 说明 | 获取方式 |
-|--------|------|---------|
-| `openai_api_key` | LLM API 密钥 | 从 OpenAI 或兼容服务商获取 |
-| `admin_password` | 管理员登录密码 | 自行设定 |
-| `jwt_secret` | JWT 签名密钥 | 改为随机字符串 |
-
-### 数据源配置（至少选一个）
-
-| 配置项 | 说明 | 获取方式 |
-|--------|------|---------|
-| `zsxq_cookie` | 知识星球登录 Cookie | 浏览器登录后从 DevTools 复制 |
-| `zsxq_group_id` | 知识星球星球 ID | 从星球 URL 中获取 |
-| `zhihu_cookie` | 知乎登录 Cookie | 浏览器登录后从 DevTools 复制 |
-| `zhihu_url_token` | 知乎用户 URL Token | 从个人主页 URL 中获取 |
-
-:::caution
-`config.json` 包含敏感信息（API 密钥、Cookie），已被 `.gitignore` 排除，请勿提交到版本控制系统。
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(48))"
+```
 :::
 
-## 第五步：验证安装
+### Required Configuration Items
 
-### 检查后端
+| Field | Description | How to Obtain |
+|-------|-------------|---------------|
+| `openai_api_key` | LLM API key | From [OpenAI Platform](https://platform.openai.com/api-keys) or a compatible provider |
+| `admin_password` | Admin login password | Choose any strong password |
+| `jwt_secret` | JWT signing secret | Generate a random string (see above) |
+
+### Data Source Configuration
+
+You need at least **one** data source configured to crawl content. Set the fields
+for whichever platforms you want to use:
+
+| Field | Description | How to Obtain |
+|-------|-------------|---------------|
+| `zsxq_cookie` | Zsxq login cookie | Log in to [wx.zsxq.com](https://wx.zsxq.com), open DevTools (F12) > Network, copy the `Cookie` header from any `api.zsxq.com` request |
+| `zsxq_group_id` | Zsxq group (planet) ID | The numeric ID in the URL: `https://wx.zsxq.com/group/1234567890` |
+| `zhihu_cookie` | Zhihu login cookie | Log in to [zhihu.com](https://www.zhihu.com), open DevTools > Network, copy the `Cookie` header from any `zhihu.com/api` request |
+| `zhihu_url_token` | Zhihu user URL token | The slug in the profile URL: `https://www.zhihu.com/people/zhang-san-88` — the token is `zhang-san-88` |
+
+:::caution
+`config.json` contains sensitive credentials (API keys, cookies). It is already
+listed in `.gitignore` — **never** commit it to version control.
+:::
+
+---
+
+## Step 5: Verify the Installation
+
+### Check the Backend
 
 ```bash
 cd backend
-python -c "from app.config import settings; print('配置加载成功:', settings.openai_model)"
+python -c "from app.config import settings; print('Config loaded:', settings.openai_model)"
 ```
 
-### 检查前端
+Expected output:
+
+```
+Config loaded: gpt-4o
+```
+
+### Check the Frontend
 
 ```bash
 cd frontend
 npm run build
 ```
 
-如果构建成功，说明前端环境已就绪。
+A successful build confirms that the frontend environment is correctly set up.
 
-## 环境变量说明
+```bash
+✓ 57 modules transformed.
+dist/index.html          0.45 kB │ gzip:  0.30 kB
+dist/assets/index-*.css  18.2 kB │ gzip:  3.91 kB
+dist/assets/index-*.js  142.7 kB │ gzip: 45.12 kB
+✓ built in 1.23s
+```
 
-除 `config.json` 外，系统还支持以下环境变量（优先级低于 config.json）：
+---
 
-| 环境变量 | 对应配置项 | 说明 |
-|---------|-----------|------|
-| `OPENAI_API_KEY` | `openai_api_key` | LLM API 密钥 |
-| `OPENAI_BASE_URL` | `openai_base_url` | API 基础 URL（用于兼容服务） |
-| `DATABASE_URL` | — | 数据库连接字符串（覆盖默认 SQLite 路径） |
+## Tips & Troubleshooting
 
-:::note
-系统优先读取 `config.json` 中的值。环境变量仅作为备选方案。
-:::
+### Using pyenv and nvm
 
-## 下一步
+```bash
+# Install and use Python 3.11 via pyenv
+pyenv install 3.11.9
+pyenv local 3.11.9
 
-配置完成后，请继续阅读 [配置说明](./configuration) 了解各配置项的详细含义，或直接跳转到 [首次运行](./first-run) 启动系统。
+# Install and use Node.js 20 LTS via nvm
+nvm install 20
+nvm use 20
+```
+
+### HuggingFace Mirror (China)
+
+If you are in China and plan to use the local embedding model, the default mirror
+is already configured:
+
+```json
+{
+  "hf_mirror_url": "https://hf-mirror.com"
+}
+```
+
+You can also set the environment variable before starting the backend:
+
+```bash
+export HF_ENDPOINT=https://hf-mirror.com
+```
+
+### Common Issues
+
+| Problem | Solution |
+|---------|----------|
+| `ModuleNotFoundError: No module named 'app'` | Make sure you are in the `backend/` directory and the virtual environment is activated |
+| `pip install` hangs on `chromadb` | ChromaDB has large dependencies; give it a few minutes. Try `pip install --upgrade pip` first |
+| `npm install` fails with ERESOLVE | Run `npm install --legacy-peer-deps` |
+| Port 8000 already in use | Find the process with `lsof -i :8000` and kill it, or change `api_port` in `config.json` |
+
+---
+
+## Next Steps
+
+Installation complete! Continue with the
+**[Configuration Reference](./configuration)** to fine-tune all settings, or jump
+straight to **[First Run](./first-run)** to start the system.

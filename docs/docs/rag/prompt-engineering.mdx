@@ -1,122 +1,124 @@
 ---
 sidebar_position: 4
-title: Prompt 工程与响应生成
-description: 系统提示词设计、来源链接嵌入、多轮对话管理与幻觉防护策略
-keywords: [Prompt Engineering, 系统提示词, 流式响应, SSE, 幻觉防护, 多轮对话]
+title: Prompt Engineering & Response Generation
+description: System prompt design, source link embedding, multi-turn conversation management, and hallucination prevention strategies
+keywords: [Prompt Engineering, system prompt, streaming response, SSE, hallucination prevention, multi-turn conversation]
 ---
 
-# Prompt 工程与响应生成
+# Prompt Engineering & Response Generation
 
-## 概述
+## Overview
 
-Prompt 工程是 RAG 系统的最后一环，也是决定回答质量的关键环节。Dungeon Lord 通过精心设计的系统提示词、结构化的上下文模板和低温度生成策略，确保 LLM 基于检索到的真实资料生成准确、有据可查的回答。
+Prompt engineering is the final stage of the RAG pipeline and a critical determinant of answer quality. Dungeon Lord uses a carefully designed system prompt, structured context templates, and a low-temperature generation strategy to ensure the LLM produces accurate, source-attributed answers grounded in retrieved real-world data.
 
 ---
 
-## 流式响应流程
+## Streaming Response Flow
 
 ```mermaid
 sequenceDiagram
-    participant U as 用户
-    participant FE as 前端 (React)
+    participant U as User
+    participant FE as Frontend (React)
     participant API as FastAPI Router
     participant RAG as RAG Engine
-    participant RET as 混合检索
-    participant LLM as OpenAI 兼容 LLM
+    participant RET as Hybrid Retrieval
+    participant LLM as OpenAI-Compatible LLM
 
-    U->>FE: 输入问题
+    U->>FE: Enter question
     FE->>API: POST /api/chat (SSE)
     API->>RAG: rag_query_stream()
 
     RAG->>RET: Dense + BM25 + RRF
-    RET-->>RAG: Top-12 检索结果
+    RET-->>RAG: Top-12 retrieval results
 
-    RAG->>RAG: 构建上下文片段
-    RAG->>RAG: 组装 messages (system + history + user)
+    RAG->>RAG: Build context fragments
+    RAG->>RAG: Assemble messages (system + history + user)
 
     RAG->>LLM: chat.completions.create(stream=True)
 
-    loop 逐 token 流式返回
+    loop Token-by-token streaming
         LLM-->>RAG: delta.content
         RAG-->>API: yield text
         API-->>FE: data: {text}\n\n
-        FE->>U: 实时显示文本
+        FE->>U: Display text in real time
     end
 
-    LLM-->>RAG: stream 结束
-    RAG-->>API: yield 完成
+    LLM-->>RAG: Stream ends
+    RAG-->>API: yield complete
     API-->>FE: data: [DONE]\n\n
-    FE->>U: 显示完整回答 + 来源链接
+    FE->>U: Show full answer + source links
 ```
 
 ---
 
-## 系统提示词设计
+## System Prompt Design
 
-### 八条核心规则
+### The Eight Core Rules
 
-系统提示词定义了 RAG 助手的行为准则，确保回答基于真实数据、引用可追溯：
+The system prompt defines the behavioral guidelines for the RAG assistant, ensuring answers are grounded in real data and citations are traceable:
 
 ```python title="backend/app/services/rag.py"
-SYSTEM_PROMPT = f"""你是一个财经观点分析助手。你的任务是根据{settings.author_name or '星主'}在知乎和知识星球上的真实发言记录，回答用户的问题。
+SYSTEM_PROMPT = f"""You are a financial opinion analysis assistant. Your task is to answer
+user questions based on {settings.author_name or 'Star Author'}'s real posts from Zhihu
+and Zsxq (Knowledge Planet).
 
-规则:
-1. 只基于提供的参考资料回答，不要编造信息
-2. 如果参考资料不足以回答问题，明确说明
-3. 回答中引用原文时，用markdown链接标注来源，格式为 [来源标题](URL)
-4. 如果参考资料中提供了原文链接(URL)，必须在引用时附上该链接，方便用户点击查看原文
-5. 回答要简洁、有条理，使用markdown格式（粗体、列表等）
-6. 支持多轮对话，结合上下文理解用户意图
-7. 优先使用编号靠前的参考资料（相关性更高），但要综合所有片段给出完整答案
-8. 当问题涉及"推荐""列举""有哪些"时，务必汇总所有相关片段中的信息，不要只看前几个"""
+Rules:
+1. Only answer based on the provided reference materials; do not fabricate information
+2. If the reference materials are insufficient to answer, state this clearly
+3. When quoting original text, cite sources using markdown links: [Title](URL)
+4. If original URLs are provided in the reference materials, you must include them
+5. Keep answers concise and well-organized; use markdown formatting (bold, lists, etc.)
+6. Support multi-turn conversation; understand user intent from context
+7. Prioritize higher-ranked reference materials (more relevant), but synthesize all fragments
+8. For questions involving "recommend", "list", "what are there", aggregate ALL relevant fragments"""
 ```
 
-### 规则解析
+### Rule-by-Rule Explanation
 
-| 规则 | 目的 | 对应策略 |
-|------|------|----------|
-| **规则 1** | 防止幻觉 | 严格约束 LLM 只使用参考资料中的信息 |
-| **规则 2** | 诚实告知 | 当检索不足时明确承认，而非编造 |
-| **规则 3-4** | 可追溯性 | 每条引用附带原文链接，用户可验证 |
-| **规则 5** | 可读性 | 使用 Markdown 格式提升阅读体验 |
-| **规则 6** | 多轮对话 | 结合历史上下文理解用户意图 |
-| **规则 7** | 相关性优先 | 优先参考排名靠前的检索结果 |
-| **规则 8** | 完整性 | 枚举类问题需汇总所有相关片段 |
+| Rule | Purpose | Corresponding Strategy |
+|------|---------|----------------------|
+| **Rule 1** | Prevent hallucination | Strictly constrains the LLM to use only reference material |
+| **Rule 2** | Honest disclosure | Acknowledge insufficient data rather than fabricate |
+| **Rule 3-4** | Traceability | Every citation includes a source URL for user verification |
+| **Rule 5** | Readability | Markdown formatting improves reading experience |
+| **Rule 6** | Multi-turn conversation | Leverages historical context to understand user intent |
+| **Rule 7** | Relevance prioritization | References higher-ranked retrieval results first |
+| **Rule 8** | Completeness | Enumeration queries must aggregate all relevant fragments |
 
-:::tip 规则 8 的设计动机
-当用户问"有哪些推荐？"时，LLM 倾向于只从前 2-3 个片段中提取信息。规则 8 明确要求"汇总所有相关片段"，避免遗漏排名靠后但内容相关的推荐。
+:::tip Why Rule 8 Matters
+When a user asks "what recommendations are there?", LLMs tend to extract information from only the first 2-3 fragments. Rule 8 explicitly requires "aggregating all relevant fragments" to avoid missing lower-ranked but content-relevant recommendations.
 :::
 
 ---
 
-## 来源链接嵌入
+## Source Link Embedding
 
-### 上下文模板
+### Context Template
 
-检索结果被格式化为带有元数据的结构化参考资料：
+Retrieval results are formatted into structured reference materials with metadata:
 
 ```python title="backend/app/services/rag.py"
-RAG_PROMPT_TEMPLATE = """参考资料:
+RAG_PROMPT_TEMPLATE = """Reference Materials:
 {context}
 
-用户问题: {question}
+User Question: {question}
 
-请基于以上参考资料回答用户的问题。每条引用都附上原文链接（参考资料中的URL）。"""
+Please answer based on the reference materials above. Attach original links for every citation (URLs from the reference materials)."""
 ```
 
-### 片段格式化
+### Fragment Formatting
 
-每条检索结果按以下格式组装：
+Each retrieval result is assembled in the following format:
 
 ```python
-# 格式: --- 片段{N} [{平台} | {类型}] {标题} ({日期}) ---
-#        原文链接: {URL}
-#        {正文内容}
+# Format: --- Fragment {N} [{platform} | {type}] {title} ({date}) ---
+#         URL: {url}
+#         {content}
 
 for i, item in enumerate(final_results):
     meta = item.get("metadata", {})
     doc = item.get("document", "")
-    platform = {"zhihu": "知乎", "zsxq": "知识星球"}.get(
+    platform = {"zhihu": "Zhihu", "zsxq": "Zsxq"}.get(
         meta.get("platform", ""), meta.get("platform", "")
     )
     content_type = meta.get("content_type", "")
@@ -130,159 +132,159 @@ for i, item in enumerate(final_results):
     if published_at:
         header += f" ({published_at[:10]})"
     if url:
-        header += f"\n原文链接: {url}"
+        header += f"\nURL: {url}"
 
-    context_parts.append(f"--- 片段{i+1} {header} ---\n{doc}")
+    context_parts.append(f"--- Fragment {i+1} {header} ---\n{doc}")
 ```
 
-### 实际输出示例
+### Real Output Example
 
-注入 LLM 的参考资料格式如下：
+The reference materials injected into the LLM look like this:
 
 ```
-参考资料:
---- 片段1 [知乎 | answer] 如何看待A股当前的估值水平？ (2024-03-15)
-原文链接: https://www.zhihu.com/question/123456/answer/789
-当前A股整体估值处于历史低位，沪深300的PE-TTM约11倍...
+Reference Materials:
+--- Fragment 1 [Zhihu | answer] How to view current A-share valuation levels? (2024-03-15)
+URL: https://www.zhihu.com/question/123456/answer/789
+The overall A-share valuation is at a historical low. The CSI 300 PE-TTM is around 11x...
 
---- 片段2 [知识星球 | topic] 市场周报 2024-W11 (2024-03-18)
-原文链接: https://wx.zsxq.com/topic/456789
-本周市场先扬后抑，上证指数收于3054点...
+--- Fragment 2 [Zsxq | topic] Weekly Market Report 2024-W11 (2024-03-18)
+URL: https://wx.zsxq.com/topic/456789
+This week the market rose then fell. The Shanghai Composite closed at 3054...
 
---- 片段3 [知乎 | answer] 2024年值得关注的投资方向 (2024-01-20)
-原文链接: https://www.zhihu.com/question/234567/answer/012
-从宏观来看，今年有三条主线值得关注...
+--- Fragment 3 [Zhihu | answer] Investment Directions Worth Watching in 2024 (2024-01-20)
+URL: https://www.zhihu.com/question/234567/answer/012
+From a macro perspective, three main themes are worth watching this year...
 ```
 
-:::info 元数据翻译
-平台名称自动翻译为中文（`zhihu` → `知乎`，`zsxq` → `知识星球`），日期截取前 10 位（`YYYY-MM-DD`），方便 LLM 引用。
+:::info Metadata Translation
+Platform names are translated to English (`zhihu` -> `Zhihu`, `zsxq` -> `Zsxq`), and dates are truncated to the first 10 characters (`YYYY-MM-DD`) for cleaner LLM output.
 :::
 
 ---
 
-## 多轮对话管理
+## Multi-Turn Conversation Management
 
-### 消息组装
+### Message Assembly
 
 ```mermaid
 flowchart TB
-    S["System Message\n系统提示词 (8条规则)"] --> H["History Messages\n最近 12 轮对话"]
-    H --> U["User Message\n参考资料 + 用户问题"]
+    S["System Message\nSystem Prompt (8 Rules)"] --> H["History Messages\nLast 12 Turns"]
+    H --> U["User Message\nReference Materials + Question"]
 
     style S fill:#E3F2FD
     style H fill:#FFF3E0
     style U fill:#E8F5E9
 ```
 
-### 代码实现
+### Code Implementation
 
 ```python title="backend/app/services/rag.py"
-# 组装消息列表
+# Assemble message list
 messages: list[dict] = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-# 加入对话历史（最近12轮）
+# Add conversation history (last 12 turns)
 if history:
     for msg in history[-12:]:
         if msg.get("role") in ("user", "assistant") and msg.get("content"):
             messages.append({"role": msg["role"], "content": msg["content"]})
 
-# 加入当前问题（含参考资料）
+# Add current question (with reference materials)
 messages.append({"role": "user", "content": prompt})
 ```
 
-### 上下文窗口管理
+### Context Window Management
 
-| 策略 | 实现 | 说明 |
-|------|------|------|
-| 历史截断 | `history[-12:]` | 只保留最近 12 轮对话 |
-| 角色过滤 | `role in ("user", "assistant")` | 过滤无效消息 |
-| 内容校验 | `msg.get("content")` | 跳过空消息 |
-| 检索结果 | Top-12 片段 | 控制参考资料总量 |
+| Strategy | Implementation | Description |
+|----------|---------------|-------------|
+| History Truncation | `history[-12:]` | Only the last 12 turns are retained |
+| Role Filtering | `role in ("user", "assistant")` | Filters out invalid messages |
+| Content Validation | `msg.get("content")` | Skips empty messages |
+| Retrieval Results | Top-12 fragments | Controls total reference material volume |
 
-:::warning Token 预算
-12 轮对话 + 12 条检索片段 + 系统提示词，总 token 数约 4000-6000，为 LLM 的回答预留了充足空间。对于 8K 上下文窗口的模型，这一配置已接近上限；如使用 16K 或更长窗口的模型，可适当增加历史轮数或检索片段数。
+:::warning Token Budget
+With 12 turns of conversation + 12 retrieval fragments + system prompt, the total token count is approximately **4000-6000 tokens**, leaving ample room for the LLM's response. For models with an 8K context window, this configuration is near the limit. With 16K or longer context models, you can increase the history turns or fragment count accordingly.
 :::
 
 ---
 
-## LLM 参数配置
+## LLM Parameters
 
 ```python title="backend/app/services/rag.py"
 client = AsyncOpenAI(**client_kwargs)
 response = await client.chat.completions.create(
-    model=settings.openai_model,       # 可配置的模型名称
+    model=settings.openai_model,       # configurable model name
     messages=messages,
-    temperature=0.3,                   # 低温度，保证事实一致性
-    stream=True,                       # 流式输出
+    temperature=0.3,                   # low temperature for factual consistency
+    stream=True,                       # streaming output
 )
 ```
 
-| 参数 | 值 | 说明 |
-|------|-----|------|
-| `model` | 配置文件指定 | OpenAI 兼容接口，支持任意模型 |
-| `temperature` | **0.3** | 低温度减少随机性，提升事实准确性 |
-| `stream` | `True** | 流式输出，降低首 token 延迟 |
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `model` | Configured in settings | OpenAI-compatible interface, supports any model |
+| `temperature` | **0.3** | Low temperature reduces randomness, improves factual accuracy |
+| `stream` | **True** | Streaming output for lower first-token latency |
 
-### Temperature 选择
+### Temperature Spectrum
 
 ```
-Temperature = 0.0  →  确定性输出，每次回答几乎相同
-Temperature = 0.3  →  低随机性，适合事实性问答 (当前选择)
-Temperature = 0.7  →  中等随机性，适合创意写作
-Temperature = 1.0  →  高随机性，适合头脑风暴
+Temperature = 0.0  -->  Deterministic output; nearly identical answers each time
+Temperature = 0.3  -->  Low randomness; ideal for factual Q&A (current setting)
+Temperature = 0.7  -->  Moderate randomness; suitable for creative writing
+Temperature = 1.0  -->  High randomness; suitable for brainstorming
 ```
 
-:::info 为什么选择 0.3？
-对于财经观点分析场景，准确性远比创意性重要。Temperature = 0.3 在保持回答自然流畅的同时，最大限度减少了 LLM "即兴发挥"的空间，使其更忠实于检索到的参考资料。
+:::info Why 0.3?
+For financial opinion analysis, accuracy matters far more than creativity. Temperature = 0.3 keeps answers natural and fluent while minimizing the LLM's tendency to "improvise", making it more faithful to the retrieved reference materials.
 :::
 
 ---
 
-## 幻觉防护策略
+## Hallucination Prevention
 
-Dungeon Lord 采用多层防护机制来降低 LLM 幻觉率：
+Dungeon Lord employs a **four-layer defense** to minimize LLM hallucination:
 
-### 第一层：系统提示词约束
+### Layer 1: System Prompt Constraints
 
-规则 1 和规则 2 从指令层面约束 LLM：
-
-```
-规则1: 只基于提供的参考资料回答，不要编造信息
-规则2: 如果参考资料不足以回答问题，明确说明
-```
-
-### 第二层：结构化参考资料
-
-每条检索结果包含明确的元数据（平台、日期、链接），使 LLM 的引用可被用户验证：
+Rules 1 and 2 constrain the LLM at the instruction level:
 
 ```
---- 片段1 [知乎 | answer] 标题 (2024-03-15)
-原文链接: https://...
-正文内容...
+Rule 1: Only answer based on the provided reference materials; do not fabricate information
+Rule 2: If the reference materials are insufficient to answer, state this clearly
 ```
 
-### 第三层：低温度生成
+### Layer 2: Structured Source Materials
 
-`temperature=0.3` 减少了 LLM 生成随机或虚构内容的概率。
+Each retrieval result includes explicit metadata (platform, date, URL), making LLM citations verifiable by the user:
 
-### 第四层：检索质量保障
+```
+--- Fragment 1 [Zhihu | answer] Title (2024-03-15)
+URL: https://...
+Content...
+```
 
-混合检索（Dense + BM25 + RRF）确保注入的参考资料高度相关，减少 LLM 因参考无关内容而产生误导的可能。
+### Layer 3: Low-Temperature Generation
+
+`temperature=0.3` reduces the probability of the LLM generating random or fabricated content.
+
+### Layer 4: Retrieval Quality Assurance
+
+Hybrid retrieval (Dense + BM25 + RRF) ensures that the injected reference materials are highly relevant, reducing the chance of the LLM being misled by irrelevant content.
 
 ```mermaid
 flowchart LR
-    subgraph 防护层
-        L1["第一层\n系统提示词\n规则 1-2"]
-        L2["第二层\n结构化来源\n可验证链接"]
-        L3["第三层\n低温度\n0.3"]
-        L4["第四层\n混合检索\n高质量上下文"]
+    subgraph Defense["Defense Layers"]
+        L1["Layer 1\nSystem Prompt\nRules 1-2"]
+        L2["Layer 2\nStructured Sources\nVerifiable URLs"]
+        L3["Layer 3\nLow Temperature\n0.3"]
+        L4["Layer 4\nHybrid Retrieval\nHigh-Quality Context"]
     end
 
-    H["🤖 LLM 回答"] --> L1
+    H["LLM Answer"] --> L1
     L1 --> L2
     L2 --> L3
     L3 --> L4
-    L4 --> OUT["✅ 准确、可追溯的回答"]
+    L4 --> OUT["Accurate, Traceable Answer"]
 
     style L1 fill:#E3F2FD
     style L2 fill:#E8F5E9
@@ -291,21 +293,21 @@ flowchart LR
     style OUT fill:#C8E6C9
 ```
 
-### 幻觉处理示例
+### Hallucination Handling Scenarios
 
-**场景：用户提问 "星主对比亚迪的看法？"**
+**Scenario: User asks "What is the author's view on BYD?"**
 
-| 情况 | 参考资料 | LLM 回答 |
-|------|----------|----------|
-| 资料充足 | 包含比亚迪相关发言 | 基于原文回答，附带来源链接 |
-| 资料不足 | 仅有"新能源汽车"泛论 | "参考资料中未找到星主对比亚迪的具体观点，但他在新能源汽车板块的讨论中提到..." |
-| 无资料 | 无相关检索结果 | "抱歉，参考资料中没有找到相关信息" |
+| Situation | Reference Materials | LLM Response |
+|-----------|-------------------|--------------|
+| **Sufficient data** | Contains BYD-related posts | Answers based on original text with source links |
+| **Insufficient data** | Only general "new energy vehicle" discussions | "The reference materials do not contain specific views on BYD, but in the new energy vehicle discussions, the author mentioned..." |
+| **No data** | No relevant retrieval results | "Sorry, no relevant information was found in the reference materials" |
 
 ---
 
-## SSE 流式传输
+## SSE Streaming Implementation
 
-### 后端实现
+### Backend Code
 
 ```python title="backend/app/routers/chat.py"
 async def event_stream():
@@ -318,48 +320,50 @@ return StreamingResponse(
     media_type="text/event-stream",
     headers={
         "Cache-Control": "no-cache",
-        "X-Accel-Buffering": "no",  # 禁用 nginx 缓冲
+        "X-Accel-Buffering": "no",  # disable nginx buffering
     },
 )
 ```
 
-### SSE 数据格式
+### SSE Data Format
 
 ```
-data: 根据
+data: Based
 
-data: 星主
+data: on
 
-data: 在
+data: the
 
-data: 知乎
+data: author's
 
-data: 上的
+data: posts
 
-data: 发言
+data: on
+
+data: Zhihu
 
 data: ...
 
 data: [DONE]
 ```
 
-### 关键 Header
+### Key Headers
 
-| Header | 值 | 作用 |
-|--------|-----|------|
-| `Content-Type` | `text/event-stream` | 标识 SSE 流 |
-| `Cache-Control` | `no-cache` | 禁用浏览器缓存 |
-| `X-Accel-Buffering` | `no` | 禁用 nginx 代理缓冲，确保实时推送 |
+| Header | Value | Purpose |
+|--------|-------|---------|
+| `Content-Type` | `text/event-stream` | Identifies the response as an SSE stream |
+| `Cache-Control` | `no-cache` | Disables browser caching |
+| `X-Accel-Buffering` | `no` | Disables nginx proxy buffering to ensure real-time push |
 
-:::warning Nginx 代理配置
-如果系统部署在 nginx 反向代理之后，必须设置 `X-Accel-Buffering: no`，否则 nginx 会缓冲整个响应后才推送，失去流式效果。
+:::warning Nginx Proxy Configuration
+If the system is deployed behind an nginx reverse proxy, `X-Accel-Buffering: no` **must** be set. Otherwise, nginx will buffer the entire response before sending it to the client, defeating the purpose of streaming.
 :::
 
 ---
 
-## API 端点
+## API Endpoints
 
-### 管理端 Chat
+### Admin Chat
 
 ```
 POST /api/chat
@@ -367,35 +371,35 @@ Authorization: Bearer <JWT Token>
 Content-Type: application/json
 
 {
-  "message": "星主怎么看当前的A股行情？",
+  "message": "What is the author's view on the current A-share market?",
   "history": [
-    {"role": "user", "content": "之前聊过什么话题？"},
-    {"role": "assistant", "content": "我们之前讨论过..."}
+    {"role": "user", "content": "What topics have we discussed?"},
+    {"role": "assistant", "content": "We previously discussed..."}
   ],
-  "kol_id": "123",      // 可选：指定作者
-  "platform": "zhihu"    // 可选：指定平台
+  "kol_id": "123",      // optional: specify author
+  "platform": "zhihu"    // optional: specify platform
 }
 ```
 
-### 公共 Dashboard Chat
+### Public Dashboard Chat
 
 ```
 POST /api/dashboard/chat
 Content-Type: application/json
 
 {
-  "message": "最近有什么投资建议？",
+  "message": "Any recent investment advice?",
   "history": []
 }
 ```
 
-:::info 频率限制
-公共 Dashboard 端点受 IP 频率限制（默认每天 10 次），管理端无限制。可通过 `GET /api/dashboard/chat-remaining` 查询剩余配额。
+:::info Rate Limiting
+The public Dashboard endpoint is subject to IP-based rate limiting (default: 10 requests per day). The admin endpoint has no rate limit. Check remaining quota via `GET /api/dashboard/chat-remaining`.
 :::
 
 ---
 
-## 下一步
+## Next Steps
 
-- [RAG 系统总览](./overview.mdx) — 回顾 RAG 系统的整体架构
-- [API 参考](/api/overview) — 查看完整的 API 文档
+- [RAG System Overview](./overview.mdx) -- Review the overall RAG architecture
+- [API Reference](/api/overview) -- View the complete API documentation

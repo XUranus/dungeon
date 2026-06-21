@@ -1,65 +1,65 @@
 ---
 sidebar_position: 2
-title: "数据流详解"
-description: "从数据采集到 RAG 问答的完整数据流水线"
+title: "Data Flow"
+description: "End-to-end data pipelines from crawling to RAG Q&A in Dungeon Lord"
 ---
 
-# 数据流详解
+# Data Flow
 
-本文档详细描述 Dungeon Lord 系统中数据从采集、预处理、向量化到最终 RAG 问答的完整流转过程。
+This document describes the complete data lifecycle in the Dungeon Lord system -- from content ingestion through platforms like Zsxq and Zhihu, through text preprocessing, semantic chunking, and vectorization, to final RAG-based question answering.
 
-## 完整数据流水线
+## End-to-End Pipeline
 
 ```mermaid
 flowchart TB
-    subgraph Crawlers ["阶段一：数据采集"]
-        ZSXQ["知识星球爬虫<br/>ZsxqCrawler"]
-        Zhihu["知乎爬虫<br/>ZhihuCrawler"]
+    subgraph Crawlers ["Stage 1: Data Crawling"]
+        ZSXQ["Zsxq Crawler<br/>ZsxqCrawler"]
+        Zhihu["Zhihu Crawler<br/>ZhihuCrawler"]
     end
 
-    subgraph RawStorage ["阶段二：原始存储"]
+    subgraph RawStorage ["Stage 2: Raw Storage"]
         SQLite[("SQLite<br/>topics / comments")]
     end
 
-    subgraph Preprocessing ["阶段三：文本预处理"]
-        HTMLClean["HTML 标签清理"]
-        QARestructure["ZSXQ Q&A 结构化改写"]
-        ZhihuTitle["知乎回答标题补全"]
-        ImageDesc["图片 LLM 描述<br/>（vision_model）"]
+    subgraph Preprocessing ["Stage 3: Text Preprocessing"]
+        HTMLClean["HTML Tag Cleaning"]
+        QARestructure["Zsxq Q&A Restructuring"]
+        ZhihuTitle["Zhihu Answer Title Injection"]
+        ImageDesc["Image LLM Description<br/>(vision_model)"]
     end
 
-    subgraph Chunking ["阶段四：语义切分"]
-        SplitByPara["按段落合并<br/>chunk_size=500"]
-        SplitBySentence["长段落按句切分"]
-        AddOverlap["添加重叠<br/>chunk_overlap=80"]
+    subgraph Chunking ["Stage 4: Semantic Chunking"]
+        SplitByPara["Merge by Paragraph<br/>chunk_size=500"]
+        SplitBySentence["Split Long Paragraphs<br/>by Sentence"]
+        AddOverlap["Add Overlap<br/>chunk_overlap=80"]
     end
 
-    subgraph Embedding ["阶段五：向量化"]
-        GetEmbed["获取 Embedding"]
+    subgraph Embedding ["Stage 5: Vectorization"]
+        GetEmbed["Get Embedding"]
         OpenAIEmb["OpenAI API<br/>text-embedding-3-small"]
-        LocalBGE["本地模型<br/>bge-small-zh-v1.5"]
+        LocalBGE["Local Model<br/>bge-small-zh-v1.5"]
     end
 
-    subgraph VectorStorage ["阶段六：向量存储"]
+    subgraph VectorStorage ["Stage 6: Vector Storage"]
         ChromaDB[("ChromaDB<br/>collection: kol_opinions")]
-        BM25Idx["BM25 内存索引"]
-        ChunkRecord["SemanticChunk 表<br/>（追踪已嵌入块）"]
+        BM25Idx["BM25 In-Memory Index"]
+        ChunkRecord["SemanticChunk Table<br/>(tracks embedded chunks)"]
     end
 
-    subgraph Query ["阶段七：RAG 查询"]
-        UserQ["用户提问"]
-        DenseRet["Dense 向量检索"]
-        BM25Ret["BM25 稀疏检索"]
-        RRF["RRF 融合排序<br/>k=60, dense_w=1.5"]
-        ContextBuild["上下文构建"]
-        LLMGen["LLM 流式生成<br/>temperature=0.3"]
-        Response["SSE 流式响应"]
+    subgraph Query ["Stage 7: RAG Query"]
+        UserQ["User Question"]
+        DenseRet["Dense Vector Retrieval"]
+        BM25Ret["BM25 Sparse Retrieval"]
+        RRF["RRF Fusion Ranking<br/>k=60, dense_w=1.5"]
+        ContextBuild["Context Assembly"]
+        LLMGen["LLM Streaming Generation<br/>temperature=0.3"]
+        Response["SSE Stream Response"]
     end
 
-    ZSXQ -->|"Cookie 认证"| SQLite
-    Zhihu -->|"Cookie 认证"| SQLite
+    ZSXQ -->|"Cookie Auth"| SQLite
+    Zhihu -->|"Cookie + x-zse-96"| SQLite
 
-    SQLite -->|"增量查询"| Preprocessing
+    SQLite -->|"Incremental Query"| Preprocessing
     HTMLClean --> QARestructure
     HTMLClean --> ZhihuTitle
     QARestructure --> ImageDesc
@@ -86,96 +86,175 @@ flowchart TB
     LLMGen -->|"SSE"| Response
 ```
 
-## 阶段一：数据采集
+## Ingestion Pipeline
 
-系统通过平台爬虫从知识星球和知乎采集目标作者的内容。
-
-### 爬虫架构
+The ingestion pipeline transforms raw platform content into searchable vector embeddings. It runs as a sequential flow orchestrated by `backend/app/services/ingestion.py`.
 
 ```mermaid
-classDiagram
-    class BaseCrawler {
-        <<abstract>>
-        +platform: str
-        +crawl_kol_profile(url_token) CrawledKOLProfile*
-        +crawl_topics(url_token, since, limit)*
-        +crawl_comments(platform_topic_id, limit)*
-        +close()*
-    }
+flowchart TB
+    Start["ingest_platform(platform)"] --> CreateTask["Create CrawlTask<br/>status='running'"]
+    CreateTask --> IncrCheck{"Full or Incremental?"}
+    IncrCheck -->|"Incremental"| QueryLast["Query latest published_at"]
+    IncrCheck -->|"Full"| SinceNone["since = None"]
 
-    class ZsxqCrawler {
-        +platform = "zsxq"
-        +cookie: str
-        +client: httpx.AsyncClient
-        +_request_with_retry()
-        +_delay()
-    }
+    QueryLast --> Crawl["crawler.crawl_topics(url_token, since)"]
+    SinceNone --> Crawl
 
-    class ZhihuCrawler {
-        +platform = "zhihu"
-        +cookie: str
-        +sign_server: str
-        +client: httpx.AsyncClient
-    }
+    Crawl --> SaveTopics["Save Topics to SQLite<br/>(dedup: platform + platform_topic_id)"]
+    SaveTopics --> SaveComments["Save Comments to SQLite<br/>(dedup: platform + platform_comment_id)"]
+    SaveComments --> EmbedNew["_embed_new_content()"]
 
-    class CrawledTopic {
-        +platform_topic_id: str
-        +title: str
-        +content: str
-        +content_type: str
-        +url: str
-        +images: list
-        +published_at: datetime
-    }
-
-    class CrawledComment {
-        +platform_comment_id: str
-        +author_name: str
-        +content: str
-        +like_count: int
-        +published_at: datetime
-    }
-
-    BaseCrawler <|-- ZsxqCrawler
-    BaseCrawler <|-- ZhihuCrawler
-    BaseCrawler ..> CrawledTopic
-    BaseCrawler ..> CrawledComment
+    EmbedNew --> Preprocess["Preprocess text<br/>(_preprocess_content)"]
+    Preprocess --> ImgDesc["Image description<br/>(_describe_images)"]
+    ImgDesc --> Chunk["Chunk text<br/>(split_text_to_chunks)"]
+    Chunk --> GetEmb["Batch embed<br/>(get_embeddings)"]
+    GetEmb --> ChromaAdd["Write to ChromaDB<br/>(add_documents)"]
+    ChromaAdd --> BM25Update["Update BM25 index<br/>(add_to_bm25_index)"]
+    BM25Update --> Done["CrawlTask.status = 'done'"]
 ```
 
-### 增量爬取
+## Query Pipeline
 
-爬取支持增量模式：系统查询 SQLite 中该平台最新的 `published_at` 时间戳，只采集该时间之后的新内容。
+The RAG query pipeline processes user questions through retrieval, fusion, and generation:
 
-参考 `backend/app/services/ingestion.py` 中的增量逻辑：
-
-```python
-if full_crawl:
-    since = None
-else:
-    last_topic_result = await db.execute(
-        select(Topic)
-        .where(Topic.platform == platform)
-        .order_by(Topic.published_at.desc())
-        .limit(1)
-    )
-    last = last_topic_result.scalar_one_or_none()
-    since = last.published_at if last else None
+```mermaid
+flowchart LR
+    Q["User Question"] --> Emb["Embed Question"]
+    Emb --> Dense["Dense Retrieval<br/>ChromaDB top-20"]
+    Emb --> BM25["BM25 Retrieval<br/>top-20"]
+    Dense --> RRF["RRF Fusion<br/>dense_w=1.5, bm25_w=1.0"]
+    BM25 --> RRF
+    RRF --> TopK["Select Top-K<br/>default: 12"]
+    TopK --> Ctx["Build Context<br/>with metadata annotations"]
+    Ctx --> LLM["LLM Streaming Call<br/>temperature=0.3"]
+    LLM --> SSE["SSE Response<br/>data: {text}"]
 ```
 
-### 知识星球爬虫特性
+## Crawl Operation Sequence
 
-- **认证方式**：Cookie 认证，通过 `config.json` 中的 `zsxq_cookie` 配置
-- **API 端点**：`https://api.zsxq.com/v2`
-- **请求节拍**：每次请求间隔 1.5 ~ 3.5 秒随机延迟
-- **重试策略**：最多 3 次重试，指数退避（基础 5 秒），429 限流时加倍等待
-- **内容类型**：支持 `q&a`、`talk`、`article` 三种主题类型
-- **评论采集**：优先使用独立评论 API，失败时回退到主题内嵌的 `show_comments`
+The following sequence diagram illustrates a complete crawl operation from the admin triggering a task through data storage:
 
-## 阶段二：原始存储
+```mermaid
+sequenceDiagram
+    actor Admin as Admin
+    participant FE as Frontend
+    participant API as FastAPI
+    participant Ingest as IngestionService
+    participant Crawler as PlatformCrawler
+    participant DB as SQLite
+    participant Emb as EmbeddingService
+    participant Chroma as ChromaDB
+    participant BM25 as BM25 Index
 
-所有采集到的原始数据存储在 SQLite 数据库中。
+    Admin->>FE: Click "Start Crawl"
+    FE->>API: POST /api/sources/crawl/async?platform=zsxq
+    API->>API: Create background task
 
-### 数据模型
+    API->>Ingest: ingest_platform(db, "zsxq")
+    Ingest->>DB: Create CrawlTask (status='running')
+
+    alt Incremental Mode
+        Ingest->>DB: Query latest published_at for zsxq
+        DB-->>Ingest: since = 2024-01-15T10:30:00
+    else Full Mode
+        Ingest->>Ingest: since = None
+    end
+
+    Ingest->>Crawler: crawl_topics(url_token, since)
+
+    loop For each topic batch
+        Crawler->>Crawler: HTTP GET api.zsxq.com/v2 (with retry + delay)
+        Crawler-->>Ingest: CrawledTopic[]
+    end
+
+    loop For each topic
+        Ingest->>Ingest: _preprocess_content(topic)
+        Note over Ingest: HTML cleaning, Q&A reformatting
+        Ingest->>Ingest: _describe_images(topic) [optional]
+        Ingest->>DB: Upsert Topic (dedup by platform + platform_topic_id)
+        Ingest->>DB: Upsert Comments
+
+        Ingest->>Ingest: split_text_to_chunks(text, 500, 80)
+        Ingest->>Ingest: _embed_new_content()
+    end
+
+    Ingest->>Emb: get_embeddings(chunks)
+    Emb-->>Ingest: float[][] vectors
+
+    Ingest->>Chroma: add_documents(ids, docs, embeddings, metadatas)
+    Ingest->>BM25: add_to_bm25_index(ids, docs, metadatas)
+    Note over BM25: Full index rebuild
+
+    Ingest->>DB: Update CrawlTask (status='done', counts)
+    API-->>FE: {task_id, status: "running"}
+    Admin->>FE: Poll status
+    FE->>API: GET /api/sources/crawl/status
+    API-->>FE: {status: "done", topics_count: N, comments_count: M}
+```
+
+## RAG Query Sequence
+
+A complete RAG query from user input to streamed response:
+
+```mermaid
+sequenceDiagram
+    actor User as User
+    participant FE as Frontend
+    participant API as FastAPI
+    participant RAG as RAG Engine
+    participant Emb as EmbeddingService
+    participant Vec as ChromaDB
+    participant BM25 as BM25 Index
+    participant Tools as ToolsService
+    participant LLM as OpenAI LLM
+
+    User->>FE: Type question
+    FE->>API: POST /api/chat or /api/dashboard/chat
+    Note over FE,API: SSE streaming request
+
+    API->>RAG: rag_query_stream(question, history)
+
+    par Parallel Retrieval
+        RAG->>Emb: get_embedding(question)
+        Emb-->>RAG: question_vector
+
+        RAG->>Vec: query(question_vector, top_k=20)
+        Vec-->>RAG: dense_results[]
+
+        RAG->>BM25: bm25_search(question, top_k=20)
+        BM25-->>RAG: bm25_results[]
+    end
+
+    RAG->>RAG: reciprocal_rank_fusion(dense, bm25)
+    Note over RAG: RRF formula: score = sum(w / (k + rank + 1))<br/>dense_weight=1.5, bm25_weight=1.0, k=60
+
+    RAG->>RAG: Build context (with metadata annotations)
+    Note over RAG: Format: [platform | type] title (date)<br/>Source URL: url<br/>Content body
+
+    RAG->>LLM: chat.completions.create(stream=True)
+    Note over LLM: system: Financial opinion analyst<br/>user: References + question
+
+    opt Tool Calling
+        LLM-->>RAG: tool_call: web_search(query)
+        RAG->>Tools: web_search(query)
+        Tools-->>RAG: search results
+        RAG->>LLM: tool result
+    end
+
+    loop Streaming Generation
+        LLM-->>RAG: chunk.choices[0].delta.content
+        RAG-->>API: yield f"data: {text}\n\n"
+        API-->>FE: SSE event
+        FE-->>User: Real-time display
+    end
+
+    LLM-->>RAG: stream end
+    RAG-->>API: yield "data: [DONE]\n\n"
+    API-->>FE: SSE done
+    FE-->>User: Response complete
+```
+
+## Data Model ER Diagram
 
 ```mermaid
 erDiagram
@@ -204,7 +283,6 @@ erDiagram
         text content
         int like_count
         json images
-        json raw_json
         datetime published_at
         datetime crawled_at
     }
@@ -230,336 +308,107 @@ erDiagram
         datetime embedded_at
     }
 
+    RecommendedHolding {
+        int id PK
+        string stock_name
+        string stock_code
+        string sentiment "bullish|bearish|neutral"
+        text reason
+        json source_topic_ids
+        json source_kols
+        float confidence
+        datetime generated_at
+    }
+
+    ProfessorIndexSnapshot {
+        int id PK
+        string version "china | global"
+        datetime snapshot_at
+        json source_topic_ids
+        json holdings
+        text notes
+    }
+
+    ProfessorIndexHolding {
+        int id PK
+        int snapshot_id FK
+        string version
+        string stock_name
+        string stock_code
+        string market "A|US|HK|JP|Fund"
+        float weight
+        bool still_held
+        datetime added_at
+    }
+
+    PublicVisitor {
+        int id PK
+        string visitor_id UK
+        datetime created_at
+    }
+
+    PublicMessage {
+        int id PK
+        string visitor_id FK
+        string role "user|assistant"
+        text content
+        datetime created_at
+    }
+
     Topic ||--o{ Comment : "has"
     Topic ||--o{ SemanticChunk : "produces"
+    Comment ||--o{ SemanticChunk : "produces"
+    ProfessorIndexSnapshot ||--o{ ProfessorIndexHolding : "contains"
+    PublicVisitor ||--o{ PublicMessage : "sends"
 ```
 
-## 阶段三：文本预处理
+## Incremental vs Full Crawl
 
-在进入向量化之前，原始文本需经过结构化预处理以提升检索质量。
+The ingestion system supports two crawling modes, controlled by the `full_crawl` parameter:
 
-### 预处理流水线
+### Incremental Mode (Default)
 
-```mermaid
-flowchart LR
-    Raw["原始文本"] --> HTML["清理 HTML"]
-    HTML --> Branch{"平台 + 类型?"}
-
-    Branch -->|"zsxq + q&a"| QA["Q&A 结构化改写"]
-    Branch -->|"zhihu + answer"| Ans["补全问题标题"]
-    Branch -->|"zhihu + pin"| Pin["清理 <br> / <a> 标签"]
-    Branch -->|"其他"| Default["保持原样"]
-
-    QA --> ImgDesc["图片描述（可选）"]
-    Ans --> ImgDesc
-    Pin --> ImgDesc
-    Default --> ImgDesc
-
-    ImgDesc --> Clean["最终文本"]
-```
-
-### HTML 清理
-
-通用的 HTML 标签清理逻辑（`backend/app/services/ingestion.py`）：
+Incremental crawling queries the database for the most recent `published_at` timestamp of the target platform, then only fetches content published after that point. This is the default behavior for both manual triggers and scheduled tasks.
 
 ```python
-def _clean_html(text: str) -> str:
-    text = re.sub(r'<e[^>]*/?>', '', text)  # ZSXQ <e> 标记
-    text = re.sub(r'<br\s*/?>', '\n', text)
-    text = re.sub(r'<[^>]+>', '', text)
-    text = re.sub(r'\n{3,}', '\n\n', text)
-    return text.strip()
-```
-
-### ZSXQ Q&A 结构化改写
-
-知识星球的 Q&A 类型内容会被改写为更清晰的问答结构，提升后续检索时的语义匹配：
-
-```python
-def _reformat_zsxq_qa(content: str, title: str | None) -> str:
-    if '[提问]' in content or '[回答]' in content:
-        content = re.sub(r'\[提问\]\s*(\S+?):', r'提问者: \1\n问题:', content)
-        content = re.sub(r'\[回答\]\s*(\S+?):', r'\n\n回答者: \1\n回答:', content)
-    return content
-```
-
-改写前：
-```
-[提问] 张三: 对A股后市怎么看？
-[回答] 星主: 我认为短期震荡，中长期看好...
-```
-
-改写后：
-```
-提问者: 张三
-问题: 对A股后市怎么看？
-
-回答者: 星主
-回答: 我认为短期震荡，中长期看好...
-```
-
-### 图片描述
-
-如果配置了 `vision_model`，系统会调用 LLM 多模态能力将图片内容转为文字描述，附加到文本末尾：
-
-```python
-async def _describe_images(topic: Topic) -> str:
-    # 只处理前 3 张图片（控制成本）
-    # 调用 vision_model 生成不超过 100 字的中文描述
-    # 返回格式：
-    # [图片描述]
-    # 1. 上证指数日K线图，显示近期连续上涨...
-    # 2. 板块资金流向图，半导体板块净流入...
-```
-
-## 阶段四：语义切分
-
-文本切分采用「先段落合并、后句子细分、再添加重叠」的三步策略。
-
-### 切分策略
-
-核心参数（`backend/app/utils/text.py`）：
-
-| 参数 | 默认值 | 说明 |
-|------|-------|------|
-| `chunk_size` | 500 字符 | 每个 chunk 的最大长度 |
-| `chunk_overlap` | 80 字符 | 相邻 chunk 的重叠长度 |
-
-### 切分过程可视化
-
-假设一段 1200 字符的文本：
-
-```
-原始文本 (1200 字符):
-┌──────────────────────────────────────────┐
-│ 段落A (200字) │ 段落B (350字) │ 段落C (400字) │ 段落D (250字) │
-└──────────────────────────────────────────┘
-
-第一步：按段落合并
-┌─────────────────────┐ ┌──────────────────────────┐ ┌──────────────────────────┐
-│ Chunk 1:             │ │ Chunk 2:                  │ │ Chunk 3:                  │
-│ 段落A + 段落B        │ │ 段落C                     │ │ 段落D                     │
-│ (550字 > 500, 拆分)  │ │ (400字)                   │ │ (250字)                   │
-└─────────────────────┘ └──────────────────────────┘ └──────────────────────────┘
-
-第二步：过长段落按句切分
-┌──────────────┐ ┌──────────────┐ ┌──────────────────────────┐ ┌──────────────────────────┐
-│ Chunk 1a:    │ │ Chunk 1b:    │ │ Chunk 2:                  │ │ Chunk 3:                  │
-│ 段落A        │ │ 段落B        │ │ 段落C                     │ │ 段落D                     │
-│ (200字)      │ │ (350字)      │ │ (400字)                   │ │ (250字)                   │
-└──────────────┘ └──────────────┘ └──────────────────────────┘ └──────────────────────────┘
-
-第三步：添加重叠 (overlap=80)
-┌──────────────┐ ┌──────────────────────┐ ┌──────────────────────────┐ ┌──────────────────────────┐
-│ Chunk 1:     │ │ Chunk 2:              │ │ Chunk 3:                  │ │ Chunk 4:                  │
-│ 段落A        │ │ ...段落A尾80字        │ │ ...段落B尾80字            │ │ ...段落C尾80字            │
-│ (200字)      │ │ + 段落B (350字)       │ │ + 段落C (400字)           │ │ + 段落D (250字)           │
-│              │ │ ≈ 430字               │ │ ≈ 480字                   │ │ ≈ 330字                   │
-└──────────────┘ └──────────────────────┘ └──────────────────────────┘ └──────────────────────────┘
-```
-
-### 重叠边界优化
-
-重叠区域会尝试在句子边界处切割，而非硬切 80 字符：
-
-```python
-# 尝试在句子边界切割重叠部分
-for sep in ["。", "！", "？", "；", ".", "!", "?", "\n"]:
-    idx = overlap_text.find(sep)
-    if idx != -1:
-        overlap_text = overlap_text[idx + 1:]
-        break
-```
-
-## 阶段五：向量化
-
-### 双模式 Embedding
-
-系统支持两种 Embedding 提供者，通过 `embedding_provider` 配置切换：
-
-```mermaid
-flowchart LR
-    Text["文本输入"] --> Check{"embedding_provider?"}
-    Check -->|"openai"| OpenAI["OpenAI Embeddings API<br/>text-embedding-3-small"]
-    Check -->|"local"| Local["SentenceTransformer<br/>bge-small-zh-v1.5"]
-
-    OpenAI --> Vec["向量输出"]
-    Local --> Vec
-```
-
-| 提供者 | 模型 | 优势 | 劣势 |
-|--------|------|------|------|
-| OpenAI | text-embedding-3-small | 质量高，无需本地资源 | 需要 API Key，有延迟 |
-| Local | bge-small-zh-v1.5 | 无网络依赖，中文优化 | 首次需下载模型（~100MB） |
-
-本地模式启动时自动检查模型是否存在，支持通过 HF Mirror（`hf_mirror_url`）加速下载。
-
-批量 Embedding 时，OpenAI 模式以 512 条为一批，本地模式以 64 条为一批。
-
-## 阶段六：向量存储
-
-### ChromaDB 存储
-
-向量存储在 ChromaDB 的 `kol_opinions` 集合中，使用 HNSW cosine 空间：
-
-```python
-COLLECTION_NAME = "kol_opinions"
-
-def get_collection() -> chromadb.Collection:
-    client = get_chroma_client()  # PersistentClient
-    return client.get_or_create_collection(
-        name=COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"},
+if full_crawl:
+    since = None
+else:
+    last_topic_result = await db.execute(
+        select(Topic)
+        .where(Topic.platform == platform)
+        .order_by(Topic.published_at.desc())
+        .limit(1)
     )
+    last = last_topic_result.scalar_one_or_none()
+    since = last.published_at if last else None
 ```
 
-每条文档的 metadata 结构：
+**Characteristics**:
+- Fetches only new content since the last crawl
+- Faster execution, lower API usage
+- Default mode for scheduled crawls
+- Deduplication by `(platform, platform_topic_id)` prevents duplicate entries
 
-```python
-{
-    "author_name": "星主名称",
-    "platform": "zsxq",           # 或 "zhihu"
-    "source_type": "topic",
-    "source_id": 123,
-    "content_type": "q&a",        # q&a | talk | article | answer | pin
-    "published_at": "2024-01-15T10:30:00",
-    "topic_title": "关于A股走势的分析",
-    "url": "https://wx.zsxq.com/topic/xxx",
-}
-```
+### Full Mode
 
-### BM25 索引同步
+Full crawling fetches all available content from the target platform regardless of existing data.
 
-每次有新内容入库时，BM25 索引会被增量更新（实际为全量重建，因为 `BM25Okapi` 不支持增量更新）：
+**Characteristics**:
+- Re-fetches all content from the platform
+- Useful after configuration changes or data corruption
+- Slower execution, higher API usage
+- Existing records are updated via upsert (unique constraint on `platform + platform_topic_id`)
+- New chunks are added to the vector store; orphaned chunks from deleted topics are cleaned up
 
-```python
-def add_to_bm25_index(ids, documents, metadatas):
-    _bm25_ids.extend(ids)
-    _bm25_docs.extend(documents)
-    _bm25_metadatas.extend(metadatas)
-    # 重建索引
-    tokenized = [_tokenize(doc) for doc in _bm25_docs]
-    _bm25_index = BM25Okapi(tokenized)
-```
+### Deduplication Strategy
 
-## 阶段七：RAG 查询
+Both modes use database-level deduplication:
 
-### 用户请求完整流程
+- **Topics**: Unique constraint on `(platform, platform_topic_id)` -- upsert on conflict
+- **Comments**: Unique constraint on `(platform, platform_comment_id)` -- upsert on conflict
+- **Semantic chunks**: Before re-embedding, existing chunks for a source are deleted from both ChromaDB and the `SemanticChunk` table
 
-```mermaid
-sequenceDiagram
-    actor User as 用户
-    participant FE as 前端
-    participant API as FastAPI
-    participant RAG as RAG Engine
-    participant Emb as Embedding Service
-    participant Vec as ChromaDB
-    participant BM25 as BM25 Index
-    participant LLM as OpenAI LLM
-
-    User->>FE: 输入问题
-    FE->>API: POST /api/chat 或 /api/dashboard/chat
-    Note over FE,API: SSE 流式请求
-
-    API->>RAG: rag_query_stream(question, history)
-
-    par 并行检索
-        RAG->>Emb: get_embedding(question)
-        Emb-->>RAG: question_vector
-
-        RAG->>Vec: query(question_vector, top_k=20)
-        Vec-->>RAG: dense_results[]
-
-        RAG->>BM25: bm25_search(question, top_k=20)
-        BM25-->>RAG: bm25_results[]
-    end
-
-    RAG->>RAG: reciprocal_rank_fusion(dense, bm25)
-    Note over RAG: RRF 公式: score = Σ(w / (k + rank + 1))<br/>dense_weight=1.5, bm25_weight=1.0, k=60
-
-    RAG->>RAG: 构建上下文（带元数据标注）
-    Note over RAG: 格式: [平台 | 类型] 标题 (日期)<br/>原文链接: URL<br/>正文内容
-
-    RAG->>LLM: chat.completions.create(stream=True)
-    Note over LLM: system: 财经观点分析助手<br/>user: 参考资料 + 问题
-
-    loop 流式生成
-        LLM-->>RAG: chunk.choices[0].delta.content
-        RAG-->>API: yield f"data: {text}\n\n"
-        API-->>FE: SSE event
-        FE-->>User: 实时显示回复
-    end
-
-    LLM-->>RAG: stream end
-    RAG-->>API: yield "data: [DONE]\n\n"
-    API-->>FE: SSE done
-    FE-->>User: 回复完成
-```
-
-### 混合检索与 RRF 融合
-
-系统使用 Dense + BM25 双路检索，通过加权 RRF（Reciprocal Rank Fusion）融合排序：
-
-```python
-def reciprocal_rank_fusion(
-    dense_results, bm25_results,
-    k=30, top_k=8, dense_weight=1.5, bm25_weight=1.0
-):
-    # Dense 排名
-    for rank, item in enumerate(dense_results):
-        rrf_scores[doc_id] += dense_weight / (k + rank + 1)
-
-    # BM25 排名
-    for rank, item in enumerate(bm25_results):
-        rrf_scores[doc_id] += bm25_weight / (k + rank + 1)
-```
-
-RRF 公式：`score(doc) = dense_weight / (k + dense_rank + 1) + bm25_weight / (k + bm25_rank + 1)`
-
-- **dense_weight=1.5**：语义检索权重更高，更适合中文语义匹配
-- **bm25_weight=1.0**：关键词检索补充精确匹配
-- **k=60**：平滑参数，控制排名差异的敏感度
-
-### BM25 分词策略
-
-BM25 使用自定义的中英文混合分词器（`backend/app/services/hybrid_retriever.py`）：
-
-```python
-def _tokenize(text: str) -> list[str]:
-    words = re.findall(r'[a-zA-Z]+', text.lower())      # 英文单词
-    chinese_chars = re.findall(r'[一-鿿]', text)           # 中文单字
-    ngrams = list(chinese_chars)                           # unigram
-    for i in range(len(chinese_chars) - 1):
-        ngrams.append(chinese_chars[i] + chinese_chars[i+1])     # bigram
-    for i in range(len(chinese_chars) - 2):
-        ngrams.append(chinese_chars[i] + chinese_chars[i+1] + chinese_chars[i+2])  # trigram
-    numbers = re.findall(r'\d+', text)                     # 数字
-    return words + ngrams + numbers
-```
-
-### 上下文构建
-
-检索结果被格式化为带元数据标注的参考资料，送入 LLM：
-
-```
---- 片段1 [知识星球 | q&a] 关于A股走势的分析 (2024-01-15) ---
-原文链接: https://wx.zsxq.com/topic/xxx
-提问者: 张三
-问题: 对A股后市怎么看？
-
---- 片段2 [知乎 | answer] 如何看待当前市场 (2024-01-10) ---
-原文链接: https://www.zhihu.com/question/xxx/answer/yyy
-问题: 如何看待当前市场？
-回答: 从技术面来看...
-```
-
-### 多轮对话
-
-RAG 引擎支持多轮对话，最近 12 条历史消息会被注入到 LLM 的 messages 中：
-
-```python
-if history:
-    for msg in history[-12:]:
-        if msg.get("role") in ("user", "assistant") and msg.get("content"):
-            messages.append({"role": msg["role"], "content": msg["content"]})
-```
+:::tip
+Use full crawl sparingly. For regular operations, incremental mode is sufficient and significantly reduces load on both the target platform APIs and the local embedding service.
+:::

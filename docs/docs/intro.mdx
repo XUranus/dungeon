@@ -1,188 +1,200 @@
 ---
 sidebar_position: 1
 slug: /
-title: 项目简介
-description: Dungeon Lord — 财经大V观点分析与 RAG 智能问答系统
-keywords: [RAG, 财经分析, 知乎, 知识星球, 混合检索]
+title: Introduction
+description: Dungeon Lord — Financial KOL Opinion Analysis & RAG Q&A System
+keywords: [RAG, financial analysis, zhihu, knowledge planet, hybrid retrieval]
 ---
 
-# Dungeon Lord — 财经大V观点分析系统
+# Dungeon Lord
 
-**Dungeon Lord** 是一个面向财经领域的 **KOL（Key Opinion Leader）观点分析与 RAG 智能问答系统**。它能够自动爬取指定财经大V在 **知乎** 和 **知识星球** 上的发言内容，构建语义向量知识库，并通过大语言模型提供精准的多轮对话式问答服务。
+**Financial KOL Opinion Analysis & RAG Q&A System**
 
-## 系统概述
+Dungeon Lord automatically crawls content from financial Key Opinion Leaders (KOLs)
+on **Zhihu** (知乎) and **Zsxq / Knowledge Planet** (知识星球), builds a searchable
+vector knowledge base, and provides AI-powered question-answering with source
+citations. Think of it as your personal research assistant that never misses a post
+from the analysts you follow.
 
-传统方式下，想要了解一位财经大V的观点需要翻阅大量的历史帖子和回答，费时费力。Dungeon Lord 通过以下流程解决这一痛点：
+---
 
-1. **数据采集** — 自动爬取目标 KOL 在知乎和知识星球上的全部内容（文章、回答、想法、帖子）
-2. **语义索引** — 使用嵌入模型将文本切块后转化为向量，存入 ChromaDB 向量数据库
-3. **混合检索** — 结合 BM25 稀疏检索与 Dense 向量检索，通过 RRF 融合排序提升召回质量
-4. **智能问答** — 基于检索到的参考资料，由大语言模型生成准确、有据可查的回答
+## What the System Does
 
-## 核心功能
+1. **Crawl** — Periodically fetches new posts, comments, and articles from configured
+   Zhihu users and Zsxq groups using authenticated browser cookies.
+2. **Clean & Chunk** — Strips HTML, normalises text, and splits long-form content into
+   overlapping semantic chunks (configurable size and overlap).
+3. **Embed & Store** — Generates dense vector embeddings (OpenAI `text-embedding-3-small`
+   or local `bge-small-zh-v1.5`) and persists them in ChromaDB. A parallel BM25 inverted
+   index is built for keyword matching.
+4. **Retrieve & Generate** — At query time, performs **hybrid retrieval** (dense vectors
+   + BM25 keywords + Reciprocal Rank Fusion), feeds the top-K chunks plus conversation
+   history to an OpenAI-compatible LLM, and streams the answer back to the client via SSE.
 
-### 双角色访问
+---
 
-系统支持两种用户角色，满足不同使用场景：
+## Two-Role Access Model
 
-| 角色 | 功能 | 说明 |
-|------|------|------|
-| **公众用户**（游客） | 浏览仪表盘、有限次数的问答 | 无需登录，每日问答有次数限制 |
-| **管理员** | 无限问答、触发爬取、管理配置、查看调度状态 | 需要密码登录，拥有完整控制权 |
+The system supports two distinct user roles:
 
-### RAG 智能问答
+| Role | Capabilities | Daily Q&A Limit |
+|------|-------------|-----------------|
+| **Public Visitor** | Browse the dashboard, ask questions without logging in | Configurable (default: **10/day**, tracked by visitor fingerprint) |
+| **Admin** | Unlimited Q&A, trigger crawls, manage settings, view scheduler status | Unlimited |
 
-- **多轮对话** — 支持上下文记忆，可在已有对话基础上追问
-- **来源引用** — 每条回答均附带原文链接，方便溯源验证
-- **流式输出** — 基于 SSE（Server-Sent Events）的流式返回，实时查看回答
-- **平台过滤** — 可按平台（知乎/知识星球）或 KOL 筛选检索范围
+The public dashboard (`/`) lets anyone explore the latest KOL opinions and ask a
+limited number of questions. The admin panel (`/sources`, `/settings`) is protected
+behind JWT (HS256) authentication.
 
-### 混合检索引擎
+---
 
-系统采用 **Dense + BM25 + RRF** 的三段式混合检索架构：
+## Core Features
 
-- **Dense 检索** — 使用嵌入模型（OpenAI 或 bge-small-zh-v1.5）进行语义相似度搜索
-- **BM25 检索** — 基于关键词的经典稀疏检索，擅长精确匹配专有名词和数字
-- **RRF 融合** — 使用加权 Reciprocal Rank Fusion 算法融合两种检索结果
+- **Multi-turn Dialogue** — The chat engine maintains conversation history so
+  follow-up questions work naturally without re-establishing context.
+- **Source Citation** — Every answer includes the original topic titles, platform name,
+  and publication date so you can verify the information at the source.
+- **Streaming SSE** — Responses are delivered as Server-Sent Events for a real-time
+  typing experience; no need to wait for the full answer.
+- **Platform Filtering** — Restrict retrieval to Zhihu-only, Zsxq-only, or both
+  platforms in a single query.
+- **Vision Model Support** — Optionally route image-containing posts through a
+  vision-capable model for richer understanding.
+- **Tool Calling** — Enable external tools such as web search (Tavily) or stock
+  data lookup that the LLM can invoke autonomously during answer generation.
+- **Scheduled Crawling** — APScheduler runs crawl jobs at configurable intervals
+  (cron expressions or fixed-minute periods) so the knowledge base stays fresh.
+- **Hot-reload Configuration** — Edit `config.json` and most settings take effect
+  immediately without restarting the server.
 
-## 技术栈
+---
 
-| 层级 | 技术 | 用途 |
-|------|------|------|
-| 后端框架 | **FastAPI** | 高性能异步 Web 框架，提供 REST API |
-| 前端框架 | **React 19 + TypeScript** | 单页应用，TailwindCSS 样式 |
-| 构建工具 | **Vite** | 前端开发与构建 |
-| 向量数据库 | **ChromaDB** | 本地持久化向量存储 |
-| 关系数据库 | **SQLite + SQLAlchemy** | 结构化数据存储（主题、评论、爬取任务） |
-| 数据库迁移 | **Alembic** | 数据库 schema 版本管理 |
-| LLM 接口 | **OpenAI 兼容 API** | 支持 OpenAI / 其他兼容服务 |
-| 嵌入模型 | **OpenAI / bge-small-zh-v1.5** | 文本向量化（可切换） |
-| 稀疏检索 | **rank-bm25** | BM25 关键词检索 |
-| 爬虫 | **httpx + Playwright** | HTTP 请求与浏览器自动化 |
-| 任务调度 | **APScheduler** | 定时爬取任务 |
-| 认证 | **python-jose (JWT)** | 管理员身份验证 |
+## Tech Stack
 
-## 系统架构
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| **Backend Framework** | FastAPI + Uvicorn | Async HTTP API with auto-generated OpenAPI docs |
+| **ORM / Database** | SQLAlchemy 2 (async) + aiosqlite + SQLite | Topic, chunk, and task metadata storage |
+| **Vector Store** | ChromaDB | Dense embedding storage and approximate nearest-neighbour search |
+| **Keyword Retrieval** | rank-bm25 | BM25 inverted index for hybrid retrieval |
+| **Embeddings** | OpenAI `text-embedding-3-small` or `bge-small-zh-v1.5` | Dense vector representation of text chunks |
+| **LLM** | OpenAI-compatible API (GPT-4o default) | Answer generation via chat completions |
+| **Crawlers** | httpx + BeautifulSoup4 | Authenticated scraping of Zhihu and Zsxq |
+| **Auth** | python-jose (JWT HS256) | Stateless admin authentication |
+| **Scheduler** | APScheduler | Periodic crawl job orchestration |
+| **Frontend** | React 19 + TypeScript + Vite | Single-page application |
+| **Styling** | Tailwind CSS 4 | Utility-first CSS framework |
+| **Markdown Rendering** | react-markdown + remark-gfm | Rich formatting of LLM responses |
+| **Deployment** | Docker + Docker Compose + Nginx | Containerised production setup |
 
-下图展示了系统的高层架构：
+---
+
+## High-Level Architecture
 
 ```mermaid
-graph TB
-    subgraph 用户端
-        Public["公众用户<br/>(游客)"]
-        Admin["管理员"]
-    end
+graph LR
+    Users[/"Users<br/>(Public / Admin)"/]
+    Frontend["Frontend<br/>React + Vite<br/>:5173"]
+    Backend["Backend<br/>FastAPI + Uvicorn<br/>:8000"]
+    SQLite["SQLite<br/>Topics, Chunks,<br/>Tasks, Settings"]
+    ChromaDB["ChromaDB<br/>Vector Store"]
+    OpenAI["OpenAI API<br/>(or compatible)"]
+    Zsxq["Zsxq / 知识星球"]
+    Zhihu["Zhihu / 知乎"]
+    Tavily["Tavily Search"]
 
-    subgraph 前端 ["前端 (React + Vite)"]
-        Dashboard["仪表盘页面"]
-        ChatUI["问答聊天页面"]
-        SettingsUI["设置页面"]
-        SourcesUI["数据源页面"]
-    end
-
-    subgraph 后端 ["后端 (FastAPI)"]
-        API["REST API 层"]
-        Auth["JWT 认证"]
-        RAG["RAG 问答引擎"]
-        HybridRetriever["混合检索器<br/>(Dense + BM25 + RRF)"]
-        Ingestion["数据采集服务"]
-        Scheduler["定时调度器"]
-    end
-
-    subgraph 外部服务
-        LLM["OpenAI 兼容 LLM"]
-        ZhihuCrawler["知乎爬虫"]
-        ZsxqCrawler["知识星球爬虫"]
-    end
-
-    subgraph 存储层
-        ChromaDB["ChromaDB<br/>(向量数据库)"]
-        SQLite["SQLite<br/>(结构化数据)"]
-        BM25Index["BM25 内存索引"]
-    end
-
-    Public --> Dashboard
-    Admin --> ChatUI
-    Admin --> SettingsUI
-    Admin --> SourcesUI
-
-    Dashboard --> API
-    ChatUI --> API
-    SettingsUI --> API
-    SourcesUI --> API
-
-    API --> Auth
-    API --> RAG
-    API --> Ingestion
-    API --> Scheduler
-
-    RAG --> HybridRetriever
-    RAG --> LLM
-
-    HybridRetriever --> ChromaDB
-    HybridRetriever --> BM25Index
-
-    Ingestion --> ZhihuCrawler
-    Ingestion --> ZsxqCrawler
-    Ingestion --> ChromaDB
-    Ingestion --> SQLite
-
-    Scheduler --> Ingestion
-
-    style 前端 fill:#e1f5fe,stroke:#0288d1
-    style 后端 fill:#fff3e0,stroke:#f57c00
-    style 存储层 fill:#e8f5e9,stroke:#388e3c
-    style 外部服务 fill:#fce4ec,stroke:#c62828
+    Users -->|"HTTP / SSE"| Frontend
+    Frontend -->|"REST API"| Backend
+    Backend -->|"Read / Write"| SQLite
+    Backend -->|"ANN Search"| ChromaDB
+    Backend -->|"Embeddings + Chat"| OpenAI
+    Backend -->|"Crawl"| Zsxq
+    Backend -->|"Crawl"| Zhihu
+    Backend -->|"Web Search"| Tavily
 ```
 
-## 数据流概览
+---
+
+## Data Flow
 
 ```mermaid
 flowchart LR
-    A["知乎 / 知识星球"] -->|爬取| B["原始内容"]
-    B -->|清洗 + 切块| C["文本片段"]
-    C -->|Embedding| D["向量"]
-    D -->|写入| E["ChromaDB"]
-    F["用户提问"] -->|Embedding| G["查询向量"]
-    G -->|Dense 检索| E
-    F -->|BM25 检索| H["BM25 索引"]
-    E -->|结果| I["RRF 融合"]
-    H -->|结果| I
-    I -->|Top-K 片段| J["LLM 生成"]
-    J -->|回答| K["用户"]
+    A["Crawl<br/>(Zsxq / Zhihu)"] --> B["Clean &<br/>Normalise"]
+    B --> C["Chunk<br/>(size / overlap)"]
+    C --> D["Embed<br/>(dense vectors)"]
+    D --> E["Store<br/>(ChromaDB + SQLite)"]
+    E --> F["Retrieve<br/>(Dense + BM25 + RRF)"]
+    F --> G["Generate<br/>(LLM + context)"]
+    G --> H["Stream<br/>(SSE to client)"]
 ```
 
-## 项目目录结构
+---
+
+## Project Directory Structure
 
 ```
 dungeon-lord/
-├── backend/                  # 后端 (FastAPI)
+├── backend/
 │   ├── app/
-│   │   ├── routers/          # API 路由
-│   │   ├── services/         # 核心业务逻辑
-│   │   ├── crawlers/         # 爬虫实现
-│   │   ├── utils/            # 工具函数
-│   │   ├── config.py         # 配置管理
-│   │   ├── models.py         # 数据库模型
-│   │   ├── database.py       # 数据库连接
-│   │   └── auth.py           # 认证逻辑
-│   ├── alembic/              # 数据库迁移
-│   ├── config.example.json   # 配置示例
-│   └── pyproject.toml        # Python 依赖
-├── frontend/                 # 前端 (React)
+│   │   ├── crawlers/            # Platform-specific crawlers
+│   │   │   ├── base.py          # Abstract crawler interface
+│   │   │   ├── zsxq.py          # Zsxq / Knowledge Planet crawler
+│   │   │   └── zhihu.py         # Zhihu crawler
+│   │   ├── routers/             # FastAPI route handlers
+│   │   │   ├── auth.py          # Login / JWT endpoints
+│   │   │   ├── chat.py          # RAG Q&A (SSE streaming)
+│   │   │   ├── dashboard.py     # Public dashboard data
+│   │   │   ├── holdings.py      # Portfolio / holdings data
+│   │   │   ├── professor_index.py # Professor index endpoints
+│   │   │   ├── proxy.py         # Image proxy
+│   │   │   ├── settings.py      # Admin settings CRUD
+│   │   │   ├── sources.py       # Crawl triggers & task history
+│   │   │   └── topics.py        # Topic browsing & search
+│   │   ├── services/            # Business logic layer
+│   │   │   ├── embedding.py     # Embedding provider abstraction
+│   │   │   ├── hybrid_retriever.py  # Dense + BM25 + RRF fusion
+│   │   │   ├── ingestion.py     # Crawl -> clean -> chunk -> embed pipeline
+│   │   │   ├── llm_client.py    # OpenAI-compatible chat client
+│   │   │   ├── rag.py           # RAG orchestration
+│   │   │   ├── tools.py         # LLM tool definitions (Tavily, stocks)
+│   │   │   └── vectorstore.py   # ChromaDB wrapper
+│   │   ├── utils/
+│   │   │   ├── scheduler.py     # APScheduler setup
+│   │   │   ├── streaming.py     # SSE helpers
+│   │   │   └── text.py          # Text cleaning utilities
+│   │   ├── auth.py              # JWT creation & verification
+│   │   ├── config.py            # Hot-reloadable config singleton
+│   │   ├── database.py          # Async SQLAlchemy engine & session
+│   │   ├── main.py              # FastAPI app entry point
+│   │   ├── models.py            # SQLAlchemy ORM models
+│   │   └── schemas.py           # Pydantic request / response schemas
+│   ├── config.example.json      # Template configuration
+│   ├── pyproject.toml           # Python project metadata & dependencies
+│   └── Dockerfile
+├── frontend/
 │   ├── src/
-│   │   ├── pages/            # 页面组件
-│   │   ├── components/       # 通用组件
-│   │   ├── contexts/         # React Context
-│   │   ├── services/         # API 调用
-│   │   └── types/            # TypeScript 类型
-│   └── package.json          # Node 依赖
-├── docs/                     # 本文档站点
-└── scripts/                  # 辅助脚本
+│   │   ├── components/          # Reusable UI components
+│   │   ├── contexts/            # Auth & Theme React contexts
+│   │   ├── pages/               # Route-level page components
+│   │   ├── services/            # API client functions
+│   │   └── utils/               # SSE, chat history, visitor helpers
+│   ├── package.json
+│   └── Dockerfile
+├── data/                        # SQLite DB + ChromaDB persistence (git-ignored)
+├── deploy/nginx/                # Nginx config for production
+├── docker-compose.yml
+└── README.md
 ```
 
-## 下一步
+---
 
-- [安装指南](./guides/installation) — 从零开始搭建开发环境
-- [配置说明](./guides/configuration) — 了解所有配置项的含义
-- [首次运行](./guides/first-run) — 启动系统并完成首次数据采集
+## Next Steps
+
+Ready to get Dungeon Lord up and running? Follow these guides in order:
+
+1. **[Installation Guide](./guides/installation)** — Set up Python, Node.js, clone
+   the repo, and install all dependencies.
+2. **[Configuration Reference](./guides/configuration)** — Learn about every config
+   option: LLM keys, data source cookies, RAG tuning, and more.
+3. **[First Run](./guides/first-run)** — Start the servers, trigger your first crawl,
+   and ask your first question.

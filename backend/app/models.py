@@ -114,3 +114,46 @@ class RecommendedHolding(Base):
     source_kols: Mapped[list | None] = mapped_column(JSON, nullable=True)
     confidence: Mapped[float] = mapped_column(default=0.5)
     generated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ProfessorIndexSnapshot(Base):
+    """教授指数快照 — 每次解析生成一条记录"""
+    __tablename__ = "professor_index_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    version: Mapped[str] = mapped_column(String(16), nullable=False)  # 内地版 | 全球版
+    snapshot_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    source_topic_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    holdings: Mapped[list] = mapped_column(JSON, nullable=False)  # [{name, code, market, weight}]
+    notes: Mapped[str | None] = mapped_column(Text)
+
+
+class ProfessorIndexHolding(Base):
+    """教授指数持仓明细"""
+    __tablename__ = "professor_index_holdings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    snapshot_id: Mapped[int] = mapped_column(Integer, ForeignKey("professor_index_snapshots.id"), nullable=False)
+    version: Mapped[str] = mapped_column(String(16), nullable=False)
+    stock_name: Mapped[str] = mapped_column(String(64), nullable=False)
+    stock_code: Mapped[str | None] = mapped_column(String(32))
+    market: Mapped[str] = mapped_column(String(16), nullable=False)  # A股|美股|港股|日股|基金
+    weight: Mapped[float | None] = mapped_column()
+    still_held: Mapped[bool] = mapped_column(default=True)
+    added_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class ProfessorIndexParseTask(Base):
+    """教授指数解析任务记录"""
+    __tablename__ = "professor_index_parse_tasks"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)  # pending|running|done|error
+    triggered_by: Mapped[str] = mapped_column(String(16), nullable=False, default="manual")  # manual|schedule
+    articles_fetched: Mapped[int] = mapped_column(Integer, default=0)
+    china_count: Mapped[int] = mapped_column(Integer, default=0)
+    global_count: Mapped[int] = mapped_column(Integer, default=0)
+    message: Mapped[str | None] = mapped_column(Text)
+    error_message: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)

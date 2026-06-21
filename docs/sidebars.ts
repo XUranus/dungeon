@@ -5,7 +5,7 @@ const sidebars: SidebarsConfig = {
     'intro',
     {
       type: 'category',
-      label: '快速开始',
+      label: 'Getting Started',
       items: [
         'guides/installation',
         'guides/configuration',
@@ -14,7 +14,7 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: '架构设计',
+      label: 'Architecture',
       items: [
         'architecture/overview',
         'architecture/data-flow',
@@ -24,7 +24,16 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'RAG 系统',
+      label: 'Core Features',
+      items: [
+        'features/professor-index',
+        'features/crawlers',
+        'features/tools',
+      ],
+    },
+    {
+      type: 'category',
+      label: 'RAG System',
       items: [
         'rag/overview',
         'rag/embedding',
@@ -34,7 +43,7 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: 'API 参考',
+      label: 'API Reference',
       items: [
         'api/overview',
         'api/auth',
@@ -46,9 +55,8 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
-      label: '进阶',
+      label: 'Advanced',
       items: [
-        'advanced/crawlers',
         'advanced/deployment',
         'advanced/optimization',
       ],

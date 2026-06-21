@@ -2,7 +2,6 @@ import React, {useState} from 'react';
 
 function tokenize(text: string): {token: string; type: string; color: string}[] {
   const tokens: {token: string; type: string; color: string}[] = [];
-  // Chinese character processing
   const chineseChars: string[] = [];
   let buffer = '';
 
@@ -36,15 +35,12 @@ function tokenize(text: string): {token: string; type: string; color: string}[] 
 }
 
 function flushChinese(chars: string[], tokens: {token: string; type: string; color: string}[]) {
-  // Unigrams
   for (const c of chars) {
     tokens.push({token: c, type: 'unigram', color: '#10b981'});
   }
-  // Bigrams
   for (let i = 0; i < chars.length - 1; i++) {
     tokens.push({token: chars[i] + chars[i + 1], type: 'bigram', color: '#f59e0b'});
   }
-  // Trigrams
   for (let i = 0; i < chars.length - 2; i++) {
     tokens.push({token: chars[i] + chars[i + 1] + chars[i + 2], type: 'trigram', color: '#ef4444'});
   }
@@ -52,10 +48,10 @@ function flushChinese(chars: string[], tokens: {token: string; type: string; col
 }
 
 const examples = [
-  {text: '推荐标普ETF', label: '中文短句'},
-  {text: '教授看好纳指标普', label: '中文长句'},
-  {text: 'QQQ定投策略', label: '中英混合'},
-  {text: 'A股股东回报差', label: '金融术语'},
+  {text: '推荐标普ETF', label: 'Short phrase'},
+  {text: '教授看好纳指标普', label: 'Longer phrase'},
+  {text: 'QQQ定投策略', label: 'Mixed CJK+English'},
+  {text: 'A股股东回报差', label: 'Financial term'},
 ];
 
 export default function TokenizationViz() {
@@ -74,15 +70,14 @@ export default function TokenizationViz() {
   };
 
   const typeConfig = [
-    {type: 'unigram', label: 'Unigram (单字)', color: '#10b981', desc: '每个汉字作为独立 token'},
-    {type: 'bigram', label: 'Bigram (双字)', color: '#f59e0b', desc: '相邻两个汉字组合'},
-    {type: 'trigram', label: 'Trigram (三字)', color: '#ef4444', desc: '相邻三个汉字组合'},
-    {type: 'en', label: '英文/数字', color: '#6366f1', desc: '英文单词和数字整体保留'},
+    {type: 'unigram', label: 'Unigram (single char)', color: '#10b981', desc: 'Each Chinese character as an independent token'},
+    {type: 'bigram', label: 'Bigram (2-char pair)', color: '#f59e0b', desc: 'Adjacent two-character combinations'},
+    {type: 'trigram', label: 'Trigram (3-char tuple)', color: '#ef4444', desc: 'Adjacent three-character combinations'},
+    {type: 'en', label: 'English / Numbers', color: '#6366f1', desc: 'English words and numbers preserved as-is'},
   ];
 
   return (
     <div style={{margin: '1.5rem 0'}}>
-      {/* Example selector */}
       <div style={{display: 'flex', gap: '6px', marginBottom: '12px', flexWrap: 'wrap'}}>
         {examples.map((ex, i) => (
           <button
@@ -97,12 +92,11 @@ export default function TokenizationViz() {
               fontSize: '0.85rem',
             }}
           >
-            {ex.label}: {ex.text}
+            {ex.label}: <code>{ex.text}</code>
           </button>
         ))}
       </div>
 
-      {/* Type filters */}
       <div style={{display: 'flex', gap: '8px', marginBottom: '12px', flexWrap: 'wrap'}}>
         {typeConfig.map(tc => (
           <button
@@ -125,7 +119,6 @@ export default function TokenizationViz() {
         ))}
       </div>
 
-      {/* Token display */}
       <div style={{
         display: 'flex',
         flexWrap: 'wrap',
@@ -153,9 +146,8 @@ export default function TokenizationViz() {
         ))}
       </div>
 
-      {/* Stats */}
       <div style={{marginTop: '8px', fontSize: '0.75rem', opacity: 0.5}}>
-        共 {tokens.length} 个 token
+        Total: {tokens.length} tokens
         {typeConfig.map(tc => {
           const count = tokens.filter(t => t.type === tc.type).length;
           return count > 0 ? ` · ${tc.label}: ${count}` : '';

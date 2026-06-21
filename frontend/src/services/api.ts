@@ -218,3 +218,60 @@ export const updateLogLevel = (level: string) =>
     method: 'PUT',
     body: JSON.stringify({ level }),
   })
+
+// ---- Professor Index ----
+export interface ProfessorIndexHolding {
+  name: string
+  code: string | null
+  market: string
+  weight: number | null
+}
+
+export interface ProfessorIndexVersion {
+  snapshot_id: number
+  snapshot_at: string | null
+  notes: string | null
+  holdings: ProfessorIndexHolding[]
+}
+
+export type ProfessorIndexData = Record<string, ProfessorIndexVersion | null>
+
+export const fetchProfessorIndex = () =>
+  request<ProfessorIndexData>('/dashboard/professor-index')
+
+export const parseProfessorIndex = () =>
+  request<{ china: string[]; global: string[]; message: string }>('/professor-index/parse', {
+    method: 'POST',
+  })
+
+// ---- Professor Index Parse Tasks ----
+export interface ParseTask {
+  id: number
+  status: 'pending' | 'running' | 'done' | 'error'
+  triggered_by: 'manual' | 'schedule'
+  articles_fetched: number
+  china_count: number
+  global_count: number
+  message: string | null
+  error_message: string | null
+  started_at: string | null
+  finished_at: string | null
+}
+
+export const startProfessorIndexParse = () =>
+  request<{ task_id: number; status: string }>('/professor-index/parse', { method: 'POST' })
+
+export const fetchProfessorIndexParseStatus = () =>
+  request<ParseTask | { status: 'idle' }>('/professor-index/parse/status')
+
+export const fetchProfessorIndexParseHistory = () =>
+  request<ParseTask[]>('/professor-index/parse/history')
+
+export const fetchProfessorIndexInterval = () =>
+  request<{ interval_days: number }>('/professor-index/interval')
+
+export const updateProfessorIndexInterval = (interval_days: number) =>
+  request<{ interval_days: number }>('/professor-index/interval', {
+    method: 'PUT',
+    body: JSON.stringify({ interval_days }),
+  })

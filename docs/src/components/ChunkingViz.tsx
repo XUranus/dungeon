@@ -1,19 +1,18 @@
 import React, {useState} from 'react';
 
-const sampleText = `教授推荐的美股ETF主要是QQQ（纳斯达克100指数ETF）。当用户问"美股不知道买啥"时，教授的回答是"就QQQ"。QQQ的优势在于不分红，不卖就没有利得税，适合长期持有。此外，教授也推荐标普500 ETF作为替代选择，认为标普的溢价相对可以忍受。对于大额资金，可以考虑港股通购买03441.HK等产品。教授还提到，定投是参与美股的好方式，不需要择时。`;
+const sampleText = `The professor's recommended US stock ETF is mainly QQQ (Nasdaq 100 Index ETF). When users ask "I don't know what to buy in US stocks", the professor's answer is "just QQQ". QQQ's advantage is that it doesn't distribute dividends - no dividends means no gains tax until you sell, making it suitable for long-term holding. Additionally, the professor also recommends S&P 500 ETF as an alternative, believing that the S&P's premium is relatively acceptable. For large amounts of capital, one can consider purchasing products like 03441.HK through Hong Kong Stock Connect. The professor also mentioned that dollar-cost averaging is a good way to participate in US stocks without needing to time the market.`;
 
-const CHUNK_SIZE = 120;
-const OVERLAP = 30;
+const CHUNK_SIZE = 200;
+const OVERLAP = 50;
 
 function generateChunks(text: string) {
   const chunks: {text: string; start: number; end: number; overlapWithPrev: boolean}[] = [];
   let pos = 0;
   while (pos < text.length) {
     let end = Math.min(pos + CHUNK_SIZE, text.length);
-    // Try to split at sentence boundary
     if (end < text.length) {
-      const lastPeriod = text.lastIndexOf('。', end);
-      const lastQuestion = text.lastIndexOf('？', end);
+      const lastPeriod = text.lastIndexOf('.', end);
+      const lastQuestion = text.lastIndexOf('?', end);
       const splitAt = Math.max(lastPeriod, lastQuestion);
       if (splitAt > pos + CHUNK_SIZE * 0.5) {
         end = splitAt + 1;
@@ -25,7 +24,6 @@ function generateChunks(text: string) {
       end,
       overlapWithPrev: pos > 0,
     });
-    // Next chunk starts with overlap
     pos = end - OVERLAP;
     if (pos <= chunks[chunks.length - 1].start) pos = end;
   }
@@ -33,7 +31,6 @@ function generateChunks(text: string) {
 }
 
 const chunks = generateChunks(sampleText);
-
 const chunkColors = ['#6366f1', '#f59e0b', '#10b981', '#ef4444', '#8b5cf6'];
 
 export default function ChunkingViz() {
@@ -41,14 +38,12 @@ export default function ChunkingViz() {
 
   return (
     <div style={{margin: '1.5rem 0'}}>
-      {/* Controls */}
-      <div style={{display: 'flex', gap: '16px', marginBottom: '16px', fontSize: '0.85rem'}}>
-        <span>块大小: <strong>{CHUNK_SIZE} 字符</strong></span>
-        <span>重叠: <strong>{OVERLAP} 字符</strong></span>
-        <span>生成: <strong>{chunks.length} 个块</strong></span>
+      <div style={{display: 'flex', gap: '16px', marginBottom: '16px', fontSize: '0.85rem', flexWrap: 'wrap'}}>
+        <span>Chunk Size: <strong>{CHUNK_SIZE} chars</strong></span>
+        <span>Overlap: <strong>{OVERLAP} chars</strong></span>
+        <span>Generated: <strong>{chunks.length} chunks</strong></span>
       </div>
 
-      {/* Original text with chunk highlights */}
       <div style={{
         padding: '16px',
         borderRadius: '8px',
@@ -57,7 +52,7 @@ export default function ChunkingViz() {
         fontSize: '0.9rem',
         marginBottom: '16px',
       }}>
-        <div style={{fontSize: '0.75rem', opacity: 0.5, marginBottom: '8px'}}>原始文本</div>
+        <div style={{fontSize: '0.75rem', opacity: 0.5, marginBottom: '8px'}}>Original Text</div>
         {sampleText.split('').map((char, i) => {
           const chunkIdx = chunks.findIndex(c => i >= c.start && i < c.end);
           const isActive = activeChunk !== null && i >= chunks[activeChunk].start && i < chunks[activeChunk].end;
@@ -80,7 +75,6 @@ export default function ChunkingViz() {
         })}
       </div>
 
-      {/* Chunk cards */}
       <div style={{display: 'flex', flexDirection: 'column', gap: '8px'}}>
         {chunks.map((chunk, i) => {
           const color = chunkColors[i % chunkColors.length];
@@ -104,9 +98,9 @@ export default function ChunkingViz() {
                   width: '8px', height: '8px', borderRadius: '50%',
                   background: color,
                 }} />
-                <span style={{fontWeight: 600, fontSize: '0.85rem'}}>块 {i + 1}</span>
+                <span style={{fontWeight: 600, fontSize: '0.85rem'}}>Chunk {i + 1}</span>
                 <span style={{fontSize: '0.7rem', opacity: 0.5}}>
-                  字符 {chunk.start}-{chunk.end} ({chunk.end - chunk.start}字)
+                  chars {chunk.start}-{chunk.end} ({chunk.end - chunk.start})
                 </span>
                 {chunk.overlapWithPrev && (
                   <span style={{
@@ -116,7 +110,7 @@ export default function ChunkingViz() {
                     background: `${color}20`,
                     color: color,
                   }}>
-                    与前块重叠 {OVERLAP} 字符
+                    overlaps prev by {OVERLAP}
                   </span>
                 )}
               </div>

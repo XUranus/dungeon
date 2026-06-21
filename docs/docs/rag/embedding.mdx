@@ -1,26 +1,26 @@
 ---
 sidebar_position: 2
-title: Embedding 系统
-description: 向量化流程、文本切分策略与 ChromaDB 存储详解
-keywords: [Embedding, BGE, bge-small-zh-v1.5, 向量化, ChromaDB, 文本切分]
+title: Embedding System
+description: Vectorization pipeline, text chunking strategy, ChromaDB storage, and dual-provider architecture
+keywords: [Embedding, BGE, bge-small-zh-v1.5, vectorization, ChromaDB, text chunking]
 ---
 
-# Embedding 系统
+# Embedding System
 
-## 概述
+## Overview
 
-Embedding 是 RAG 系统的基础——它将自然语言文本转换为高维向量，使计算机能够通过数学运算衡量文本之间的语义相似度。Dungeon Lord 使用本地部署的中文 Embedding 模型，配合 ChromaDB 向量数据库，实现了高效的语义检索。
+Embedding is the foundation of the RAG system. It converts natural language text into high-dimensional vectors, enabling the system to measure semantic similarity through mathematical operations. Dungeon Lord uses a locally deployed Chinese embedding model paired with ChromaDB for efficient semantic retrieval, with an optional OpenAI API provider for higher-dimensional embeddings.
 
 ---
 
-## Embedding 流程
+## Embedding Pipeline
 
 ```mermaid
 flowchart LR
-    A["📄 原始文本"] --> B["🔧 预处理\nHTML清理 / Q&A重组"]
-    B --> C["✂️ 文本切分\n500字 / 80字重叠"]
-    C --> D["📐 向量化\nbge-small-zh-v1.5"]
-    D --> E["💾 存储\nChromaDB"]
+    A["Raw Text"] --> B["Preprocessing\nHTML Cleaning / Q&A Reformatting"]
+    B --> C["Text Chunking\n500 chars / 80-char overlap"]
+    C --> D["Vectorization\nbge-small-zh-v1.5"]
+    D --> E["Storage\nChromaDB"]
 
     style A fill:#4CAF50,color:#fff
     style E fill:#2196F3,color:#fff
@@ -28,63 +28,63 @@ flowchart LR
 
 ---
 
-## 本地 Embedding 模型
+## Local Embedding Model
 
 ### BAAI/bge-small-zh-v1.5
 
-这是由智源人工智能研究院（BAAI）发布的中文小规模向量模型，专为中文语义检索场景优化。
+This is a small-scale Chinese vector model released by the Beijing Academy of Artificial Intelligence (BAAI), specifically optimized for Chinese semantic retrieval scenarios.
 
-| 属性 | 值 |
-|------|-----|
-| 模型 ID | `BAAI/bge-small-zh-v1.5` |
-| 向量维度 | **512** |
-| 模型大小 | ~90MB |
-| 推理设备 | CPU |
-| 加载框架 | `sentence-transformers` |
-| 归一化 | `normalize_embeddings=True` |
-| 批处理大小 | 64 |
+| Property | Value |
+|----------|-------|
+| Model ID | `BAAI/bge-small-zh-v1.5` |
+| Vector Dimensions | **512** |
+| Model Size | ~90MB |
+| Inference Device | CPU |
+| Loading Framework | `sentence-transformers` |
+| Normalization | `normalize_embeddings=True` |
+| Batch Size | 64 |
 
-### 工作原理
+### How the Model Works
 
 ```mermaid
 flowchart LR
-    T["输入文本\n'如何看待当前A股走势？'"] --> M["BGE 模型\nTransformer Encoder"]
-    M --> V["512维浮点向量\n[0.023, -0.156, 0.089, ...]"]
-    V --> N["L2 归一化\n||v|| = 1"]
+    T["Input Text\n'How to view current A-share trends?'"] --> M["BGE Model\nTransformer Encoder"]
+    M --> V["512-dim Float Vector\n[0.023, -0.156, 0.089, ...]"]
+    V --> N["L2 Normalization\n||v|| = 1"]
 
     style T fill:#E8F5E9
     style V fill:#E3F2FD
 ```
 
-模型将输入文本经过 Transformer 编码器后，提取 `[CLS]` token 的隐藏状态作为句子向量，再通过 L2 归一化使其单位化，便于后续使用余弦相似度进行比较。
+The model passes input text through a Transformer encoder, extracts the `[CLS]` token's hidden state as the sentence vector, then applies L2 normalization to unitize it. This makes cosine similarity computation equivalent to a simple dot product, which is highly efficient.
 
-### 代码实现
+### Code Implementation
 
 ```python title="backend/app/services/embedding.py"
 LOCAL_MODEL_ID = "BAAI/bge-small-zh-v1.5"
 
 async def get_embedding(text: str) -> list[float]:
-    """获取单条文本的embedding向量"""
+    """Get the embedding vector for a single text."""
     if settings.embedding_provider == "local":
         model = _get_local_model()
         vec = model.encode(text, normalize_embeddings=True)
-        return vec.tolist()  # -> 512维浮点数组
+        return vec.tolist()  # -> 512-dim float array
 
 async def get_embeddings(texts: list[str]) -> list[list[float]]:
-    """批量获取embedding向量"""
+    """Batch-get embedding vectors for multiple texts."""
     if settings.embedding_provider == "local":
         model = _get_local_model()
         vecs = model.encode(texts, normalize_embeddings=True, batch_size=64)
         return [v.tolist() for v in vecs]
 ```
 
-:::tip 延迟加载
-模型采用延迟加载策略——首次调用 `get_embedding()` 时才通过 `SentenceTransformer` 加载到内存，后续调用复用同一实例。启动时通过 `ensure_local_model()` 检查模型是否已下载，未下载则自动从 HuggingFace 拉取。
+:::tip Lazy Loading
+The model uses a lazy loading strategy -- it is only loaded into memory via `SentenceTransformer` on the first call to `get_embedding()`. Subsequent calls reuse the same instance. At startup, `ensure_local_model()` checks whether the model has been downloaded; if not, it is automatically fetched from HuggingFace.
 :::
 
-### HuggingFace 镜像支持
+### HuggingFace Mirror Support
 
-为解决国内网络访问 HuggingFace 的问题，系统支持配置镜像源：
+To address network access issues in certain regions, the system supports configuring a mirror source:
 
 ```json title="config.json"
 {
@@ -92,7 +92,8 @@ async def get_embeddings(texts: list[str]) -> list[list[float]]:
 }
 ```
 
-代码中自动设置环境变量：
+The environment variable is set automatically in code:
+
 ```python
 if settings.hf_mirror_url:
     os.environ["HF_ENDPOINT"] = settings.hf_mirror_url
@@ -100,9 +101,9 @@ if settings.hf_mirror_url:
 
 ---
 
-## ChromaDB 向量数据库
+## ChromaDB Vector Database
 
-### 配置
+### Configuration
 
 ```python title="backend/app/services/vectorstore.py"
 COLLECTION_NAME = "kol_opinions"
@@ -111,35 +112,35 @@ def get_collection() -> chromadb.Collection:
     client = get_chroma_client()
     _collection = client.get_or_create_collection(
         name=COLLECTION_NAME,
-        metadata={"hnsw:space": "cosine"},  # 余弦相似度
+        metadata={"hnsw:space": "cosine"},  # cosine similarity
     )
 ```
 
-| 配置项 | 值 | 说明 |
-|--------|-----|------|
-| 存储类型 | `PersistentClient` | 持久化到磁盘 |
-| 存储路径 | `data/chroma/` | 重启后数据不丢失 |
-| 集合名称 | `kol_opinions` | 存储 KOL 观点片段 |
-| 距离度量 | `cosine` | 余弦相似度（HNSW 索引） |
+| Setting | Value | Description |
+|---------|-------|-------------|
+| Storage Type | `PersistentClient` | Persisted to disk |
+| Storage Path | `data/chroma/` | Data survives restarts |
+| Collection Name | `kol_opinions` | Stores KOL opinion fragments |
+| Distance Metric | `cosine` | Cosine similarity (HNSW index) |
 
-### 余弦相似度
+### Cosine Similarity
 
-两个向量 **a** 和 **b** 的余弦相似度计算公式：
+The cosine similarity between two vectors **a** and **b** is defined as:
 
 ```
 cosine_sim(a, b) = (a . b) / (||a|| * ||b||)
 ```
 
-由于向量已经过 L2 归一化（`||a|| = 1`），余弦相似度简化为向量点积，计算效率极高。相似度范围为 `[-1, 1]`：
+Since vectors are already L2-normalized (`||a|| = 1`), cosine similarity simplifies to the dot product, making computation highly efficient. The similarity range is `[-1, 1]`:
 
-| 范围 | 含义 |
-|------|------|
-| **1.0** | 完全相同 |
-| **0.7 - 0.9** | 高度相关 |
-| **0.3 - 0.7** | 部分相关 |
-| **< 0.3** | 关联较弱 |
+| Range | Interpretation |
+|-------|----------------|
+| **1.0** | Identical |
+| **0.7 - 0.9** | Highly related |
+| **0.3 - 0.7** | Partially related |
+| **< 0.3** | Weakly related |
 
-### 查询操作
+### Query Operations
 
 ```python title="backend/app/services/vectorstore.py"
 def query(
@@ -147,66 +148,66 @@ def query(
     n_results: int = 10,
     where: dict | None = None,
 ) -> dict:
-    """向量检索，支持元数据过滤"""
+    """Vector search with optional metadata filtering."""
     collection = get_collection()
     kwargs = {
         "query_embeddings": [query_embedding],
         "n_results": n_results,
     }
     if where:
-        kwargs["where"] = where  # 例如 {"platform": "zhihu"}
+        kwargs["where"] = where  # e.g., {"platform": "zhihu"}
     return collection.query(**kwargs)
 ```
 
-:::info 元数据过滤
-查询时可按 `platform`（平台）或 `kol_id`（作者ID）等字段过滤，ChromaDB 在 HNSW 索引上执行预过滤，不影响检索性能。
+:::info Metadata Filtering
+Queries can be filtered by `platform` or `kol_id` (author ID). ChromaDB performs pre-filtering on the HNSW index without impacting retrieval performance.
 :::
 
 ---
 
-## 文本切分策略
+## Text Chunking Strategy
 
-### 设计目标
+### Design Goals
 
-文本切分（Chunking）的目标是将长文档拆分为适合 Embedding 和检索的片段，同时保证：
+Text chunking (splitting long documents into segments) aims to produce fragments suitable for embedding and retrieval while ensuring:
 
-- **语义完整性** — 每个 chunk 应包含完整的语义单元
-- **上下文连续性** — 相邻 chunk 之间有重叠，避免信息断裂
-- **长度适中** — 太短缺乏上下文，太长稀释关键信息
+- **Semantic completeness** -- Each chunk should contain a complete semantic unit
+- **Contextual continuity** -- Adjacent chunks overlap to prevent information loss at boundaries
+- **Appropriate length** -- Too short lacks context; too long dilutes key information
 
-### 切分参数
+### Chunking Parameters
 
-| 参数 | 值 | 说明 |
-|------|-----|------|
-| `chunk_size` | **500 字符** | 每个 chunk 的最大长度 |
-| `chunk_overlap` | **80 字符** | 相邻 chunk 的重叠长度 |
-| 切分单位 | 字符（非 token） | 中文场景更直观 |
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `chunk_size` | **500 characters** | Maximum length of each chunk |
+| `chunk_overlap` | **80 characters** | Overlap length between adjacent chunks |
+| Splitting Unit | Characters (not tokens) | More intuitive for Chinese text |
 
-### 两阶段切分算法
+### Two-Pass Chunking Algorithm
 
 ```mermaid
 flowchart TB
-    subgraph Pass1["第一阶段：段落合并"]
-        A["按换行符分割为段落"] --> B{"当前段落 + 缓冲区 ≤ 500 字符？"}
-        B -->|是| C["合并到缓冲区"]
+    subgraph Pass1["Pass 1: Paragraph Merging"]
+        A["Split text by newlines into paragraphs"] --> B{"Current paragraph + buffer <= 500 chars?"}
+        B -->|Yes| C["Merge into buffer"]
         C --> B
-        B -->|否| D["输出当前缓冲区"]
-        D --> E{"段落本身 > 500？"}
-        E -->|是| F["按句子拆分"]
-        E -->|否| G["新缓冲区 = 当前段落"]
+        B -->|No| D["Output current buffer"]
+        D --> E{"Paragraph itself > 500?"}
+        E -->|Yes| F["Split by sentences"]
+        E -->|No| G["New buffer = current paragraph"]
         F --> G
         G --> B
     end
 
-    subgraph Pass2["第二阶段：重叠注入"]
-        H["取上一个 chunk 末尾 80 字符"] --> I["在句子边界处切割\n。！？；.!?;"]
-        I --> J["作为下一个 chunk 的前缀"]
+    subgraph Pass2["Pass 2: Overlap Injection"]
+        H["Take last 80 chars of previous chunk"] --> I["Cut at sentence boundary\n。！？；.!?;"]
+        I --> J["Prepend to next chunk"]
     end
 
     Pass1 --> Pass2
 ```
 
-### 代码实现
+### Code Implementation
 
 ```python title="backend/app/utils/text.py"
 def split_text_to_chunks(
@@ -214,7 +215,7 @@ def split_text_to_chunks(
     chunk_size: int = 500,
     chunk_overlap: int = 80,
 ) -> list[str]:
-    # 第一步：按段落合并
+    # Pass 1: Merge paragraphs
     paragraphs = [p.strip() for p in text.split("\n") if p.strip()]
     raw_chunks: list[str] = []
     current_chunk = ""
@@ -226,19 +227,19 @@ def split_text_to_chunks(
             if current_chunk:
                 raw_chunks.append(current_chunk.strip())
             if len(para) > chunk_size:
-                # 段落过长，按句子拆分
+                # Paragraph too long, split by sentences
                 sub_chunks = _split_by_sentences(para, chunk_size)
                 raw_chunks.extend(sub_chunks)
                 current_chunk = ""
             else:
                 current_chunk = para
 
-    # 第二步：添加重叠
+    # Pass 2: Add overlap
     chunks: list[str] = [raw_chunks[0]]
     for i in range(1, len(raw_chunks)):
         prev = raw_chunks[i - 1]
-        overlap_text = prev[-chunk_overlap:]  # 取末尾80字符
-        # 尝试在句子边界切割
+        overlap_text = prev[-chunk_overlap:]  # last 80 chars
+        # Try to cut at sentence boundary
         for sep in ["。", "！", "？", "；", ".", "!", "?", "\n"]:
             idx = overlap_text.find(sep)
             if idx != -1:
@@ -249,133 +250,139 @@ def split_text_to_chunks(
     return chunks
 ```
 
-### 可视化示例
+### Visual Example
 
-以下是一段知乎回答的切分过程：
+Below is a step-by-step chunking example for a Chinese financial text:
 
 ```
-原始文本 (约 1200 字符):
-┌─────────────────────────────────────────────────────────┐
-│ 当前A股市场处于震荡整理阶段。从技术面来看，上证指数在     │
-│ 3200点附近获得支撑，但上方3300点压力较大。MACD指标显示    │
-│ 短期动能不足，成交量持续萎缩。                            │
-│                                                          │
-│ 从基本面来看，经济复苏的节奏比预期要慢。消费数据虽然环     │
-│ 比改善，但同比仍处于低位。社融数据有所回升，主要靠政府     │
-│ 债券支撑，企业中长期贷款需求偏弱。                        │
-│                                                          │
-│ 板块方面，建议关注三个方向：                              │
-│ 一是AI产业链，算力需求持续增长；                          │
-│ 二是新能源，光伏组件价格企稳回升；                        │
-│ 三是医药创新药，政策环境持续改善。                        │
-│                                                          │
-│ 操作上建议保持6成仓位，逢低布局优质成长股...              │
-└─────────────────────────────────────────────────────────┘
+Original Text (~1200 characters):
++-------------------------------------------------------------+
+| The A-share market is in a consolidation phase. From a      |
+| technical perspective, the Shanghai Composite found support  |
+| near 3200, but faces strong resistance at 3300. MACD shows  |
+| weak short-term momentum with declining volume.              |
+|                                                              |
+| Fundamentally, economic recovery is slower than expected.    |
+| Consumer data improved month-over-month but remains low      |
+| year-over-year. Social financing rebounded, mainly driven    |
+| by government bonds, while corporate medium-to-long-term     |
+| loan demand is weak.                                        |
+|                                                              |
+| Sector-wise, three directions are worth watching:           |
+| 1. AI industry chain -- computing demand continues to grow   |
+| 2. New energy -- photovoltaic component prices stabilizing   |
+| 3. Innovative pharma -- policy environment improving         |
+|                                                              |
+| Operationally, maintain 60% position, buy quality growth...  |
++-------------------------------------------------------------+
 
-切分结果 (chunk_size=500, chunk_overlap=80):
+Chunking Result (chunk_size=500, chunk_overlap=80):
 
-Chunk 1 (490 字符):
-┌─────────────────────────────────────────────────────────┐
-│ 当前A股市场处于震荡整理阶段。从技术面来看，上证指数在     │
-│ 3200点附近获得支撑，但上方3300点压力较大。MACD指标显示    │
-│ 短期动能不足，成交量持续萎缩。                            │
-│                                                          │
-│ 从基本面来看，经济复苏的节奏比预期要慢。消费数据虽然环     │
-│ 比改善，但同比仍处于低位。                                │
-└─────────────────────────────────────────────────────────┘
+Chunk 1 (490 chars):
++-------------------------------------------------------------+
+| The A-share market is in a consolidation phase. From a      |
+| technical perspective, the Shanghai Composite found support  |
+| near 3200, but faces strong resistance at 3300. MACD shows  |
+| weak short-term momentum with declining volume.              |
+|                                                              |
+| Fundamentally, economic recovery is slower than expected.    |
+| Consumer data improved month-over-month but remains low      |
++-------------------------------------------------------------+
 
-Chunk 2 (470 字符):
-┌─────────────────────────────────────────────────────────┐
-│ 消费数据虽然环比改善，但同比仍处于低位。社融数据有所      │ ← 重叠
-│ 回升，主要靠政府债券支撑，企业中长期贷款需求偏弱。        │
-│                                                          │
-│ 板块方面，建议关注三个方向：                              │
-│ 一是AI产业链，算力需求持续增长；                          │
-│ 二是新能源，光伏组件价格企稳回升；                        │
-│ 三是医药创新药，政策环境持续改善。                        │
-└─────────────────────────────────────────────────────────┘
+Chunk 2 (470 chars):
++-------------------------------------------------------------+
+| Consumer data improved month-over-month but remains low      | <-- overlap
+| year-over-year. Social financing rebounded, mainly driven    |
+| by government bonds, while corporate medium-to-long-term     |
+| loan demand is weak.                                        |
+|                                                              |
+| Sector-wise, three directions are worth watching:           |
+| 1. AI industry chain -- computing demand continues to grow   |
+| 2. New energy -- photovoltaic component prices stabilizing   |
+| 3. Innovative pharma -- policy environment improving         |
++-------------------------------------------------------------+
 
-Chunk 3 (180 字符):
-┌─────────────────────────────────────────────────────────┐
-│ 政策环境持续改善。                                        │ ← 重叠
-│                                                          │
-│ 操作上建议保持6成仓位，逢低布局优质成长股...              │
-└─────────────────────────────────────────────────────────┘
+Chunk 3 (180 chars):
++-------------------------------------------------------------+
+| policy environment improving.                                | <-- overlap
+|                                                              |
+| Operationally, maintain 60% position, buy quality growth...  |
++-------------------------------------------------------------+
 ```
 
-:::note 重叠的作用
-Chunk 2 的开头与 Chunk 1 的末尾有约 80 字符的重叠。这确保了"社融数据"这一关键信息同时出现在两个 chunk 中，避免在 chunk 边界处丢失语义连贯性。
+:::note Purpose of Overlap
+Chunk 2's beginning overlaps with Chunk 1's end by approximately 80 characters. This ensures that "social financing" (a key concept) appears in both chunks, preventing semantic discontinuity at chunk boundaries.
 :::
 
 ---
 
-## 数据预处理
+## Data Preprocessing
 
-在文本切分之前，原始数据需要经过预处理清洗。
+Before chunking, raw data undergoes preprocessing and cleaning.
 
-### 知识星球 (ZSXQ) Q&A 重组
+### Zsxq (Knowledge Planet) Q&A Reformatting
 
-知识星球的问答格式被重组为统一的结构化文本：
+Q&A-format posts from Zsxq are restructured into a unified text format:
 
 ```
-原始格式:                          重组后:
-┌─────────────────────┐           ┌─────────────────────┐
-│ {                   │           │ 提问者: 张三        │
-│   "question": {     │    →      │ 问题: 现在适合入场吗 │
-│     "owner": "张三",│           │ 回答者: 星主        │
-│     "text": "..."   │           │ 回答: 目前市场...   │
-│   },                │           └─────────────────────┘
-│   "answer": {       │
-│     "text": "..."   │
-│   }                 │
-│ }                   │
-└─────────────────────┘
+Original Format:                   Reformatted:
++--------------------+            +--------------------+
+| {                  |            | Questioner: Zhang  |
+|   "question": {    |     -->    | Q: Is now a good   |
+|     "owner": "...",|            |    time to enter?   |
+|     "text": "..."  |            | Answerer: Star     |
+|   },               |            | A: Currently the   |
+|   "answer": {      |            |    market...       |
+|     "text": "..."  |            +--------------------+
+|   }                |
+| }                  |
++--------------------+
 ```
 
-### HTML 清理
+### HTML Cleaning
 
-去除 `<e>`、`<br>` 及其他 HTML 标签，保留纯文本内容。
+Removes `<e>`, `<br>`, and other HTML tags, retaining only plain text content.
 
-### 知乎内容处理
+### Zhihu Content Processing
 
-| 内容类型 | 处理方式 |
-|----------|----------|
-| 回答（answer） | 在文本前拼接问题标题作为上下文 |
-| 想法（pin） | HTML 标签清理 |
-| 文章（article） | 直接使用正文 |
+| Content Type | Processing |
+|--------------|------------|
+| Answer | Prepends the question title as context |
+| Pin (thought) | HTML tag cleaning |
+| Article | Uses body text directly |
 
 ---
 
-## 双 Provider 架构
+## Dual Provider Architecture
 
-系统支持两种 Embedding Provider，通过配置切换：
+The system supports two embedding providers, switchable via configuration:
 
 ```mermaid
 flowchart TB
     Q["get_embedding(text)"] --> Check{"settings.embedding_provider"}
-    Check -->|local| Local["本地 BGE 模型\nsentence-transformers\nCPU 推理"]
-    Check -->|openai| OpenAI["OpenAI API\ntext-embedding-3-small\n远程调用"]
+    Check -->|local| Local["Local BGE Model\nsentence-transformers\nCPU Inference"]
+    Check -->|openai| OpenAI["OpenAI API\ntext-embedding-3-small\nRemote Call"]
 
     style Local fill:#4CAF50,color:#fff
     style OpenAI fill:#2196F3,color:#fff
 ```
 
-| 对比项 | 本地 BGE | OpenAI API |
-|--------|----------|------------|
-| 维度 | 512 | 1536 |
-| 延迟 | ~10ms/条 | ~100ms/条 |
-| 成本 | 免费 | 按 token 计费 |
-| 网络依赖 | 无 | 需要网络 |
-| 中文优化 | 专门优化 | 通用模型 |
-| 批处理大小 | 64 | 512 |
+| Comparison | Local BGE | OpenAI API |
+|------------|-----------|------------|
+| Dimensions | 512 | 1536 |
+| Latency | ~10ms per text | ~100ms per text |
+| Cost | Free | Per-token billing |
+| Network Dependency | None | Requires internet |
+| Chinese Optimization | Purpose-built | General-purpose |
+| Batch Size | 64 | 512 |
 
-:::info 默认配置
-当前部署使用 **本地 BGE 模型**（`embedding_provider: "local"`），适合对延迟敏感、对成本敏感的场景。如需更高精度，可切换为 OpenAI 的 `text-embedding-3-small`。
+:::info Default Configuration
+The current deployment uses the **local BGE model** (`embedding_provider: "local"`), which is ideal for latency-sensitive and cost-sensitive scenarios. For higher precision, switch to OpenAI's `text-embedding-3-small` by changing the provider setting.
 :::
 
 ---
 
-## 下一步
+## Next Steps
 
-- [混合检索](./hybrid-retrieval.mdx) — 了解 Dense + BM25 + RRF 的融合检索机制
-- [Prompt 工程](./prompt-engineering.mdx) — 系统提示词设计与响应生成策略
+- [Hybrid Retrieval](./hybrid-retrieval.mdx) -- Understand the Dense + BM25 + RRF fusion retrieval mechanism
+- [Prompt Engineering](./prompt-engineering.mdx) -- System prompt design and response generation strategies

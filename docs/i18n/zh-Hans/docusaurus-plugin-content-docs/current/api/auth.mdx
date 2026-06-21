@@ -1,0 +1,154 @@
+---
+sidebar_position: 2
+title: Auth API
+description: 管理员认证接口 — 登录获取 JWT、验证 Token
+keywords: [认证, 登录, JWT, Token]
+---
+
+# Auth API
+
+管理员认证相关接口。无需预认证即可调用登录接口，验证接口需要携带有效的 JWT Token。
+
+**路由前缀：** `/api/auth`
+
+---
+
+## POST /api/auth/login
+
+管理员登录，验证密码后签发 JWT Token。
+
+### 请求
+
+```
+POST /api/auth/login
+Content-Type: application/json
+```
+
+**请求体：**
+
+| 字段 | 类型 | 必填 | 说明 |
+|------|------|------|------|
+| `password` | `string` | 是 | 管理员密码（对应配置项 `admin_password`） |
+
+**请求示例：**
+
+```json
+{
+  "password": "your-admin-password"
+}
+```
+
+### 响应
+
+**成功 (200)：**
+
+```json
+{
+  "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhZG1pbiIsImV4cCI6MTcxOTUwMDAwMH0.xxxxx"
+}
+```
+
+**错误 (401)：**
+
+```json
+{
+  "detail": "密码错误"
+}
+```
+
+**错误 (500)：**
+
+```json
+{
+  "detail": "管理员密码未配置"
+}
+```
+
+### curl 示例
+
+```bash
+curl -X POST http://localhost:8000/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"password": "your-admin-password"}'
+```
+
+---
+
+## GET /api/auth/check
+
+验证当前持有的 JWT Token 是否有效。需要在请求头中携带 Token。
+
+### 请求
+
+```
+GET /api/auth/check
+Authorization: Bearer <token>
+```
+
+### 响应
+
+**成功 (200)：**
+
+```json
+{
+  "ok": true
+}
+```
+
+**错误 (401)：**
+
+```json
+{
+  "detail": "未登录"
+}
+```
+
+或
+
+```json
+{
+  "detail": "Token 无效或已过期"
+}
+```
+
+### curl 示例
+
+```bash
+curl http://localhost:8000/api/auth/check \
+  -H "Authorization: Bearer eyJhbGciOiJIUzI1NiIs..."
+```
+
+---
+
+## JWT Token 格式
+
+### 签名算法
+
+- **算法：** HS256（HMAC-SHA256）
+- **密钥：** 配置项 `jwt_secret`（默认值 `change-me-to-a-random-string`，生产环境务必修改）
+
+### Payload 结构
+
+```json
+{
+  "sub": "admin",
+  "exp": 1719500000
+}
+```
+
+| 字段 | 类型 | 说明 |
+|------|------|------|
+| `sub` | `string` | 固定为 `"admin"`，表示管理员身份 |
+| `exp` | `number` | 过期时间（Unix 时间戳） |
+
+### 过期时间
+
+由配置项 `jwt_expire_hours` 控制，默认 **24 小时**。Token 过期后需重新登录获取新 Token。
+
+### 安全建议
+
+:::warning 生产环境安全
+1. 务必修改 `jwt_secret` 为高强度随机字符串（如 `openssl rand -hex 32` 的输出）
+2. 使用 HTTPS 传输 Token，防止中间人截获
+3. 合理设置 `jwt_expire_hours`，避免过长的有效期
+:::

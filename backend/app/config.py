@@ -57,6 +57,7 @@ _DEFAULTS: dict = {
     "tavily_api_key": "",
     "enable_tools": True,
     "cors_origins": ["*"],
+    "professor_index_interval_days": 7,
 }
 
 

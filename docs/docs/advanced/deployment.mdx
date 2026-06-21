@@ -1,40 +1,49 @@
 ---
 sidebar_position: 2
-title: 部署指南
-description: 生产环境部署方案 — Uvicorn/Gunicorn、Nginx 反向代理、环境配置与安全加固
-keywords: [部署, Uvicorn, Gunicorn, Nginx, 生产环境, 安全]
+title: Deployment Guide
+description: Production deployment — Uvicorn/Gunicorn, Nginx reverse proxy, Docker, systemd, SSE configuration, and security hardening
+keywords: [deployment, Uvicorn, Gunicorn, Nginx, Docker, systemd, production, security]
 ---
 
-# 部署指南
+# Deployment Guide
 
-本文档介绍如何将 Dungeon Lord 部署到生产环境，包括 ASGI 服务器配置、Nginx 反向代理、环境变量管理和安全加固。
+This guide covers deploying Dungeon Lord to production, including ASGI server configuration, Nginx reverse proxy, Docker Compose, systemd service management, and security hardening.
 
-## 部署架构
+## Deployment Architecture
 
 ```mermaid
 flowchart LR
-    Client[客户端浏览器] --> Nginx[Nginx<br/>反向代理 + 静态文件]
-    Nginx -->|/api| Backend[Uvicorn/Gunicorn<br/>FastAPI ASGI]
-    Nginx -->|/| Frontend[前端静态文件<br/>React build]
+    Client[Client Browser] --> Nginx[Nginx<br/>Reverse Proxy + Static Files]
+    Nginx -->|/api/*| Backend[Uvicorn / Gunicorn<br/>FastAPI ASGI]
+    Nginx -->|/*| Frontend[React SPA<br/>Static Build]
     Backend --> SQLite[(SQLite<br/>app.db)]
-    Backend --> Chroma[(ChromaDB<br/>向量存储)]
-    Backend --> SignServer[Node.js<br/>签名/数据服务器]
+    Backend --> Chroma[(ChromaDB<br/>Vector Store)]
+
+    style Nginx fill:#e8f5e9
+    style Backend fill:#e3f2fd
+    style SQLite fill:#fff3e0
+    style Chroma fill:#fce4ec
 ```
+
+The recommended production stack is:
+
+1. **Nginx** -- serves static frontend files and reverse-proxies API requests
+2. **Uvicorn or Gunicorn+UvicornWorker** -- runs the FastAPI application
+3. **SQLite** -- metadata and topic storage
+4. **ChromaDB** -- vector embeddings for RAG retrieval
 
 ---
 
-## 后端部署
+## Backend Deployment
 
-### 使用 Uvicorn（推荐小规模部署）
+### Option A: Uvicorn Standalone (Small-Scale)
 
-Uvicorn 是一个轻量级的 ASGI 服务器，适合中小规模部署。
+Uvicorn is a lightweight ASGI server suitable for development and small deployments.
 
 ```bash
-# 安装依赖
 cd backend
 pip install -e ".[prod]"
 
-# 直接启动
 uvicorn app.main:app \
   --host 0.0.0.0 \
   --port 8000 \
@@ -42,22 +51,29 @@ uvicorn app.main:app \
   --log-level info
 ```
 
-**关键参数：**
+**Key Parameters:**
 
-| 参数 | 说明 | 推荐值 |
-|------|------|--------|
-| `--host` | 监听地址 | `0.0.0.0`（对外） |
-| `--port` | 监听端口 | `8000` |
-| `--workers` | 工作进程数 | CPU 核心数的 2-4 倍 |
-| `--log-level` | 日志级别 | `info` |
+| Parameter | Description | Recommended Value |
+|-----------|-------------|-------------------|
+| `--host` | Bind address | `0.0.0.0` (external access) |
+| `--port` | Bind port | `8000` |
+| `--workers` | Worker process count | 2--4x CPU cores |
+| `--log-level` | Logging verbosity | `info` |
+| `--timeout-keep-alive` | Keep-alive timeout (seconds) | `300` (for SSE) |
 
-### 使用 Gunicorn + Uvicorn Worker（推荐生产环境）
+### Option B: Gunicorn + Uvicorn Worker (Recommended for Production)
 
-Gunicorn 提供更成熟的进程管理能力，配合 Uvicorn 的 ASGI worker 使用。
+Gunicorn provides mature process management. Use Uvicorn's ASGI worker class for async support.
+
+**Install:**
 
 ```bash
-pip install gunicorn
+pip install gunicorn uvicorn[standard]
+```
 
+**Quick Start:**
+
+```bash
 gunicorn app.main:app \
   --worker-class uvicorn.workers.UvicornWorker \
   --workers 4 \
@@ -67,45 +83,52 @@ gunicorn app.main:app \
   --error-logfile -
 ```
 
-**Gunicorn 配置文件示例** (`gunicorn.conf.py`)：
+**Configuration File** (`gunicorn.conf.py`):
 
 ```python
-# 绑定地址
+# Bind address
 bind = "0.0.0.0:8000"
 
-# Worker 配置
+# Worker configuration
 worker_class = "uvicorn.workers.UvicornWorker"
 workers = 4
 
-# 超时配置（爬取任务可能耗时较长）
+# Timeout configuration (crawls can be long-running)
 timeout = 300
 graceful_timeout = 30
+keepalive = 5
 
-# 日志
+# Logging
 accesslog = "-"
 errorlog = "-"
 loglevel = "info"
 
-# 进程管理
+# Process recycling (prevents memory leaks)
 max_requests = 1000
 max_requests_jitter = 50
+
+# Preload for shared state across workers
+preload_app = true
 ```
 
-启动：
+**Start with config file:**
 
 ```bash
 gunicorn -c gunicorn.conf.py app.main:app
 ```
 
-:::warning 多 Worker 注意事项
-SQLite 不支持高并发写入。多 Worker 部署时，爬取任务可能产生写入冲突。建议：
-1. 仅从单个 Worker 执行爬取任务
-2. 或使用 Gunicorn 的 `--preload` 选项确保共享状态
+:::warning Multi-Worker Caveats
+SQLite does not support high-concurrency writes. When running multiple workers:
+1. Ensure crawl tasks execute from a single worker only
+2. Use `preload_app = true` to share read-only state
+3. ChromaDB also has single-writer limitations -- avoid parallel embedding writes
 :::
 
-### Systemd 服务配置
+---
 
-创建 `/etc/systemd/system/dungeon-lord.service`：
+## Systemd Service Configuration
+
+Create a service file at `/etc/systemd/system/dungeon-lord.service`:
 
 ```ini
 [Unit]
@@ -122,22 +145,34 @@ ExecStart=/opt/dungeon-lord/backend/.venv/bin/gunicorn -c gunicorn.conf.py app.m
 Restart=always
 RestartSec=5
 
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/dungeon-lord/data
+
 [Install]
 WantedBy=multi-user.target
 ```
+
+**Enable and Start:**
 
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable dungeon-lord
 sudo systemctl start dungeon-lord
+
+# Verify status
 sudo systemctl status dungeon-lord
+
+# View logs
+sudo journalctl -u dungeon-lord -f
 ```
 
 ---
 
-## 前端部署
+## Frontend Build and Hosting
 
-### 构建静态文件
+### Build Static Files
 
 ```bash
 cd frontend
@@ -145,28 +180,31 @@ npm install
 npm run build
 ```
 
-构建产物位于 `frontend/dist/` 目录。
+The build output is placed in `frontend/dist/`.
 
-### Nginx 托管前端
-
-将构建产物复制到 Nginx 的静态文件目录：
+### Deploy to Nginx
 
 ```bash
+sudo mkdir -p /var/www/dungeon-lord
 sudo cp -r frontend/dist/* /var/www/dungeon-lord/
+sudo chown -R www-data:www-data /var/www/dungeon-lord
 ```
 
 ---
 
-## Nginx 反向代理配置
+## Nginx Reverse Proxy Configuration
 
-### 完整配置示例
+### Full Configuration Example
 
 ```nginx
+# Rate limiting zone for login endpoint
+limit_req_zone $binary_remote_addr zone=auth:10m rate=5r/s;
+limit_req_zone $binary_remote_addr zone=api:10m rate=30r/s;
+
+# HTTP -> HTTPS redirect
 server {
     listen 80;
     server_name your-domain.com;
-
-    # 重定向到 HTTPS（可选）
     return 301 https://$host$request_uri;
 }
 
@@ -174,65 +212,162 @@ server {
     listen 443 ssl http2;
     server_name your-domain.com;
 
-    # SSL 证书
+    # SSL certificates
     ssl_certificate /etc/ssl/certs/your-domain.pem;
     ssl_certificate_key /etc/ssl/private/your-domain.key;
     ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
 
-    # 前端静态文件
+    # Security headers
+    add_header X-Frame-Options DENY;
+    add_header X-Content-Type-Options nosniff;
+    add_header X-XSS-Protection "1; mode=block";
+
+    # Frontend static files
     root /var/www/dungeon-lord;
     index index.html;
 
-    # API 反向代理
+    # SPA route fallback
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Static asset caching
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
+        expires 7d;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # API reverse proxy -- general
     location /api/ {
+        limit_req zone=api burst=20 nodelay;
+
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
 
-        # SSE 流式响应专用配置
+        # SSE streaming support
         proxy_buffering off;
         proxy_cache off;
         proxy_read_timeout 300s;
         proxy_send_timeout 300s;
-
-        # 禁用 Nginx 对 chunked 响应的缓冲
         proxy_http_version 1.1;
         chunked_transfer_encoding on;
     }
 
-    # SPA 路由回退
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
+    # Login endpoint -- stricter rate limiting
+    location /api/auth/login {
+        limit_req zone=auth burst=3 nodelay;
 
-    # 静态资源缓存
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
-        expires 7d;
-        add_header Cache-Control "public, immutable";
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 }
 ```
 
-### SSE 流式响应关键配置
+### SSE-Specific Nginx Settings
 
-聊天接口使用 Server-Sent Events 流式返回，Nginx 默认会缓冲响应，导致客户端无法实时接收数据。以下配置必须添加：
+Chat endpoints use Server-Sent Events for real-time streaming. Nginx buffers proxy responses by default, which prevents SSE from working. The following directives are **required**:
 
-```nginx
-proxy_buffering off;       # 禁用代理缓冲
-proxy_cache off;           # 禁用代理缓存
-proxy_read_timeout 300s;   # 长连接超时（爬取可能耗时）
-proxy_http_version 1.1;    # 使用 HTTP/1.1
+| Directive | Value | Purpose |
+|-----------|-------|---------|
+| `proxy_buffering` | `off` | Disable response buffering so chunks are forwarded immediately |
+| `proxy_cache` | `off` | Disable caching for dynamic SSE streams |
+| `proxy_read_timeout` | `300s` | Allow long-lived connections (LLM generation can take minutes) |
+| `proxy_send_timeout` | `300s` | Allow slow clients to receive data |
+| `proxy_http_version` | `1.1` | Required for chunked transfer encoding |
+| `chunked_transfer_encoding` | `on` | Enable chunked responses |
+
+:::warning
+Without `proxy_buffering off`, the client will not receive any SSE events until the entire response completes, effectively disabling real-time streaming.
+:::
+
+---
+
+## Docker Deployment
+
+### docker-compose.yml
+
+```yaml
+version: "3.8"
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data          # SQLite + ChromaDB persistence
+      - ./backend/config.json:/app/config.json
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+```
+
+### Backend Dockerfile
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl && \
+    rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+### Running with Docker Compose
+
+```bash
+# Build and start all services
+docker compose up -d
+
+# View logs
+docker compose logs -f backend
+
+# Stop all services
+docker compose down
 ```
 
 ---
 
-## 环境配置
+## Environment Configuration
 
-### config.json 关键配置项
+### config.json Key Settings
 
-生产环境务必修改以下配置：
+Production deployments **must** modify the following values:
 
 ```json
 {
@@ -241,84 +376,76 @@ proxy_http_version 1.1;    # 使用 HTTP/1.1
   "openai_api_key": "sk-...",
   "openai_base_url": "",
   "api_host": "0.0.0.0",
-  "api_port": 8000
+  "api_port": 8000,
+  "crawl_interval_minutes": 60,
+  "public_chat_daily_limit": 10
 }
 ```
 
-### 生成安全的 JWT 密钥
+### Data Directory Structure
 
-```bash
-# 使用 OpenSSL 生成 64 字符十六进制随机字符串
-openssl rand -hex 32
-```
-
-### 数据目录结构
-
-运行时生成的数据文件：
+Runtime-generated data files:
 
 ```
 backend/
-  config.json          # 配置文件
+  config.json              # Application configuration
+  gunicorn.conf.py         # Gunicorn configuration
 data/
-  app.db               # SQLite 数据库
-  chroma/              # ChromaDB 向量存储
+  app.db                   # SQLite database
+  chroma/                  # ChromaDB vector store
 ```
 
-确保运行用户对 `data/` 目录有读写权限。
+Ensure the service user has read/write permissions on the `data/` directory.
+
+### Generating a Secure JWT Secret
+
+```bash
+openssl rand -hex 32
+```
 
 ---
 
-## 安全加固
+## Security Hardening
 
-### 必须修改的默认配置
+### Critical Configuration Changes
 
-| 配置项 | 默认值 | 风险 | 建议 |
-|--------|--------|------|------|
-| `admin_password` | `""`（空） | 任何人可登录管理后台 | 设置强密码 |
-| `jwt_secret` | `change-me-to-a-random-string` | Token 可被伪造 | 生成随机密钥 |
+| Config Key | Default Value | Risk | Recommendation |
+|------------|---------------|------|----------------|
+| `admin_password` | `""` (empty) | Anyone can log in | Set a strong password |
+| `jwt_secret` | `change-me-to-a-random-string` | Tokens can be forged | Generate a random secret |
 
-### 网络安全
+### Network Security
 
-1. **使用 HTTPS** -- JWT Token 在 HTTP 明文中传输可被中间人截获
-2. **限制管理端口** -- 如果不需要公网访问管理 API，通过防火墙限制 8000 端口
-3. **Nginx 速率限制** -- 防止暴力破解管理员密码
+1. **Use HTTPS** -- JWT tokens transmitted over HTTP can be intercepted by man-in-the-middle attacks
+2. **Restrict management ports** -- If the management API does not need public access, block port 8000 with a firewall
+3. **Nginx rate limiting** -- Prevent brute-force attacks on the login endpoint
 
 ```nginx
-# 在 http 块中定义限速区域
-limit_req_zone $binary_remote_addr zone=api:10m rate=10r/s;
+# Define rate limit zones in the http block
+limit_req_zone $binary_remote_addr zone=auth:10m rate=5r/s;
 
-# 在 location /api/auth/login 中应用
+# Apply to the login endpoint
 location /api/auth/login {
-    limit_req zone=api burst=5 nodelay;
+    limit_req zone=auth burst=3 nodelay;
     proxy_pass http://127.0.0.1:8000;
-    # ... 其他 proxy 配置
+    # ... other proxy settings
 }
 ```
 
-### Cookie 安全
+### Cookie Security and Rotation
 
-知乎和知识星球的 Cookie 会过期，需要定期更新。建议：
-1. 监控爬取任务状态，出现 401/403 错误时及时更新 Cookie
-2. 通过 Settings API 或直接修改 `config.json` 更新
+Platform cookies (Zsxq, Zhihu) expire periodically and must be rotated:
 
----
-
-## Node.js 签名服务器
-
-知乎爬虫依赖 Node.js 签名/数据服务器，需要单独启动：
+1. **Monitor crawl task status** -- check for `401` or `403` errors in task results
+2. **Update cookies** via the Settings API or by editing `config.json` directly
+3. **Restart crawling** after updating cookies
 
 ```bash
-# 签名服务器
-cd backend/scripts
-node zhihu_sign_server.js  # 默认监听 17007 端口
+# Check for recent crawl failures
+curl http://localhost:8000/api/sources/tasks \
+  -H "Authorization: Bearer <token>" | jq '.[] | select(.status == "error")'
 ```
 
-建议使用 PM2 进行进程管理：
-
-```bash
-npm install -g pm2
-
-pm2 start backend/scripts/zhihu_sign_server.js --name zhihu-sign
-pm2 save
-pm2 startup
-```
+:::tip Automated Monitoring
+Set up a cron job or health check that queries `/api/sources/tasks` and alerts when the most recent task has `status: "error"` with an authentication-related error message.
+:::

@@ -3,44 +3,44 @@ import React, {useState, useEffect} from 'react';
 const steps = [
   {
     id: 'question',
-    label: '用户提问',
-    desc: '用户在聊天界面输入自然语言问题',
-    example: '教授推荐什么美股ETF？',
+    label: 'User Question',
+    desc: 'User inputs a natural language question in the chat interface',
+    example: 'What US stock ETFs does the professor recommend?',
     color: '#10b981',
   },
   {
     id: 'embed',
-    label: '问题向量化',
-    desc: '使用 bge-small-zh-v1.5 将问题编码为 512 维向量',
-    example: '[0.023, -0.156, 0.089, ..., 0.234] (512维)',
+    label: 'Question Embedding',
+    desc: 'Encode the question into a 512-dimensional vector using bge-small-zh-v1.5',
+    example: '[0.023, -0.156, 0.089, ..., 0.234] (512 dimensions)',
     color: '#6366f1',
   },
   {
     id: 'retrieve',
-    label: '混合检索',
-    desc: 'Dense (余弦相似度) + BM25 (稀疏) + RRF 融合排序',
-    example: 'Dense: 15条 → BM25: 15条 → RRF融合 → Top 12',
+    label: 'Hybrid Retrieval',
+    desc: 'Dense (cosine similarity) + BM25 (sparse) + RRF fusion ranking',
+    example: 'Dense: 15 results → BM25: 15 results → RRF fusion → Top 12',
     color: '#f59e0b',
   },
   {
     id: 'context',
-    label: '构建上下文',
-    desc: '将检索到的文档片段格式化为带来源链接的参考资料',
-    example: '--- 片段1 [知识星球 | q&a] ---\\n原文链接: https://...\\n内容...',
+    label: 'Context Assembly',
+    desc: 'Format retrieved document fragments as reference materials with source metadata',
+    example: '--- Fragment 1 [Zsxq | q&a] ---\nSource URL: https://...\nContent...',
     color: '#8b5cf6',
   },
   {
     id: 'generate',
-    label: 'LLM 生成',
-    desc: '将系统提示 + 参考资料 + 用户问题发送给 LLM，流式生成回答',
-    example: '根据星主的观点，推荐的美股ETF是QQQ...',
+    label: 'LLM Generation',
+    desc: 'Send system prompt + reference materials + user question to LLM for streaming generation',
+    example: 'Based on the professor\'s opinions, the recommended US stock ETF is QQQ...',
     color: '#ef4444',
   },
   {
     id: 'stream',
-    label: '流式返回',
-    desc: '通过 SSE 逐 token 推送到前端，实时渲染 Markdown',
-    example: 'data: 根据\\ndata: 星主\\ndata: 的观点\\ndata: [DONE]',
+    label: 'Streaming Response',
+    desc: 'Push tokens to frontend via SSE in real-time, rendering Markdown progressively',
+    example: 'data: Based on\ndata: the professor\'s\ndata: opinions\ndata: [DONE]',
     color: '#10b981',
   },
 ];
@@ -65,8 +65,7 @@ export default function RAGPipeline() {
 
   return (
     <div style={{margin: '1.5rem 0'}}>
-      {/* Controls */}
-      <div style={{display: 'flex', gap: '8px', marginBottom: '16px', alignItems: 'center'}}>
+      <div style={{display: 'flex', gap: '8px', marginBottom: '16px', alignItems: 'center', flexWrap: 'wrap'}}>
         <button
           onClick={() => { setActiveStep(0); setIsPlaying(true); }}
           style={{
@@ -79,7 +78,7 @@ export default function RAGPipeline() {
             fontSize: '0.85rem',
           }}
         >
-          ▶ 播放动画
+          ▶ Play Animation
         </button>
         <button
           onClick={() => { setIsPlaying(false); setActiveStep(0); }}
@@ -92,14 +91,13 @@ export default function RAGPipeline() {
             fontSize: '0.85rem',
           }}
         >
-          重置
+          Reset
         </button>
         <span style={{fontSize: '0.8rem', opacity: 0.5}}>
-          步骤 {activeStep + 1} / {steps.length}
+          Step {activeStep + 1} / {steps.length}
         </span>
       </div>
 
-      {/* Step indicators */}
       <div style={{display: 'flex', gap: '4px', marginBottom: '16px'}}>
         {steps.map((step, i) => (
           <div
@@ -117,7 +115,6 @@ export default function RAGPipeline() {
         ))}
       </div>
 
-      {/* Active step detail */}
       <div style={{
         padding: '20px',
         borderRadius: '12px',
@@ -154,7 +151,6 @@ export default function RAGPipeline() {
         </div>
       </div>
 
-      {/* Step buttons */}
       <div style={{display: 'flex', gap: '6px', marginTop: '12px', flexWrap: 'wrap'}}>
         {steps.map((step, i) => (
           <button

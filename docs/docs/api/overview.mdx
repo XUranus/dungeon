@@ -1,188 +1,244 @@
 ---
 sidebar_position: 1
-title: API 概览
-description: Dungeon Lord REST API 总览，包含基础 URL、认证方式、端点列表及通用响应格式
-keywords: [API, REST, 认证, JWT, 端点]
+title: API Overview
+description: Dungeon Lord REST API overview — base URL, authentication, endpoint catalog, and common response formats
+keywords: [API, REST, authentication, JWT, endpoints, SSE]
 ---
 
-# API 概览
+# API Overview
 
-Dungeon Lord 后端基于 **FastAPI** 构建，提供 RESTful JSON API。所有端点以 `/api` 为前缀。
+The Dungeon Lord backend is built on **FastAPI** and exposes a RESTful JSON API. All endpoints are prefixed with `/api`.
 
-## 基础信息
+## Base Information
 
-| 项目 | 说明 |
-|------|------|
-| **基础 URL** | `http://localhost:8000`（默认） |
-| **协议** | HTTP / HTTPS（生产环境推荐 HTTPS） |
-| **数据格式** | JSON（`Content-Type: application/json`） |
-| **流式响应** | SSE（`text/event-stream`），用于聊天接口 |
-| **认证方式** | JWT Bearer Token（HS256） |
+| Item | Details |
+|------|---------|
+| **Base URL** | `http://localhost:8000` (default) |
+| **Protocol** | HTTP / HTTPS (HTTPS recommended for production) |
+| **Content Type** | `application/json` for request and response bodies |
+| **Streaming** | SSE (`text/event-stream`) for chat endpoints |
+| **Authentication** | JWT Bearer Token (HS256) |
 
-## 认证模式
+## Authentication Model
 
-系统采用 **JWT（JSON Web Token）** 认证，使用 HS256 算法签名。
+The system uses **JWT (JSON Web Token)** authentication signed with the HS256 algorithm.
 
 ```mermaid
 sequenceDiagram
-    participant Client as 客户端
-    participant Server as 服务端
+    participant Client as Client
+    participant Server as Server
 
     Client->>Server: POST /api/auth/login {password}
     Server-->>Client: {"token": "eyJhbG..."}
-    Note over Client: 存储 token（localStorage）
+    Note over Client: Store token (localStorage)
 
     Client->>Server: GET /api/protected-endpoint
     Note right of Client: Authorization: Bearer eyJhbG...
     Server-->>Client: 200 OK / 401 Unauthorized
 ```
 
-### 认证分类
+### Endpoint Classification
 
-API 端点分为两类：
+API endpoints fall into two categories:
 
-- **公开端点** -- 无需认证，任何人可访问（如 Dashboard、公共聊天）
-- **管理员端点** -- 需要有效的 JWT Bearer Token（如数据源管理、设置、管理员聊天）
+- **Public endpoints** -- No authentication required. Accessible by anyone (e.g., Dashboard, public chat, professor index).
+- **Admin endpoints** -- Require a valid JWT Bearer Token (e.g., sources management, settings, admin chat, holdings management).
 
-在请求头中携带 Token：
+Pass the token in the `Authorization` header:
 
 ```
 Authorization: Bearer <your-jwt-token>
 ```
 
-## 端点总览
+## Endpoint Catalog
 
-### 健康检查
+### Health Check
 
-| 方法 | 路径 | 认证 | 说明 |
-|------|------|------|------|
-| `GET` | `/api/health` | 无 | 服务健康检查 |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/health` | None | Service health check |
 
-### Auth -- 认证
+### Auth -- Authentication
 
-| 方法 | 路径 | 认证 | 说明 |
-|------|------|------|------|
-| `POST` | `/api/auth/login` | 无 | 管理员登录，返回 JWT |
-| `GET` | `/api/auth/check` | Bearer | 验证 Token 有效性 |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/api/auth/login` | None | Admin login, returns JWT |
+| `GET` | `/api/auth/check` | Bearer | Verify token validity |
 
-详见 [Auth API](./auth.mdx)。
+See [Authentication](./auth.mdx) for details.
 
-### Dashboard -- 公共大屏
+### Dashboard -- Public Display
 
-| 方法 | 路径 | 认证 | 说明 |
-|------|------|------|------|
-| `GET` | `/api/dashboard/summary` | 无 | 获取最新观点摘要 |
-| `GET` | `/api/dashboard/chat-remaining` | 无 | 查询当前 IP 剩余聊天次数 |
-| `POST` | `/api/dashboard/chat` | 无 | 公共 RAG 问答（SSE 流式，限频） |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/dashboard/summary` | None | Latest opinion summaries with remaining chat count |
+| `GET` | `/api/dashboard/holdings` | None | Current recommended holdings |
+| `POST` | `/api/dashboard/visitor` | None | Register or retrieve visitor via cookie |
+| `GET` | `/api/dashboard/messages` | None | Retrieve visitor chat history |
+| `POST` | `/api/dashboard/chat` | None | Public RAG Q&A (SSE, rate-limited by visitor) |
+| `GET` | `/api/dashboard/professor-index` | None | Latest professor index snapshots |
 
-详见 [Dashboard API](./dashboard.mdx)。
+See [Dashboard API](./dashboard.mdx) for details.
 
-### Chat -- 管理员聊天
+### Chat -- Admin Chat
 
-| 方法 | 路径 | 认证 | 说明 |
-|------|------|------|------|
-| `POST` | `/api/chat` | Bearer | 管理员 RAG 问答（SSE 流式，无限次） |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/api/chat` | Bearer | Admin RAG Q&A (SSE, unlimited, Vercel AI SDK format) |
 
-详见 [Chat API](./chat.mdx)。
+See [Chat API](./chat.mdx) for details.
 
-### Topics -- 话题管理
+### Topics -- Topic Management
 
-| 方法 | 路径 | 认证 | 说明 |
-|------|------|------|------|
-| `GET` | `/api/topics` | Bearer | 分页查询话题列表（支持筛选） |
-| `GET` | `/api/topics/{topic_id}/comments` | Bearer | 获取话题评论列表 |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/topics` | Bearer | Paginated topic list with filters |
+| `GET` | `/api/topics/{id}/comments` | Bearer | Retrieve comments for a topic |
 
-### Sources -- 数据源管理
+### Sources -- Data Source Management
 
-| 方法 | 路径 | 认证 | 说明 |
-|------|------|------|------|
-| `GET` | `/api/sources/platforms` | Bearer | 列出已启用的平台 |
-| `POST` | `/api/sources/crawl` | Bearer | 同步爬取所有平台 |
-| `POST` | `/api/sources/crawl/{platform}` | Bearer | 同步爬取指定平台 |
-| `POST` | `/api/sources/crawl/async` | Bearer | 异步爬取（后台任务） |
-| `GET` | `/api/sources/crawl/status` | Bearer | 查询后台爬取进度 |
-| `GET` | `/api/sources/tasks` | Bearer | 爬取任务历史记录 |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/sources/platforms` | Bearer | List enabled platforms |
+| `POST` | `/api/sources/crawl` | Bearer | Synchronous crawl of all platforms |
+| `POST` | `/api/sources/crawl/async` | Bearer | Asynchronous crawl (background task) |
+| `GET` | `/api/sources/crawl/status` | Bearer | Query crawl progress |
+| `POST` | `/api/sources/crawl/{platform}` | Bearer | Crawl a specific platform |
+| `GET` | `/api/sources/tasks` | Bearer | Crawl task history |
 
-详见 [Sources API](./sources.mdx)。
+See [Sources API](./sources.mdx) for details.
 
-### Settings -- 系统设置
+### Settings -- System Settings
 
-| 方法 | 路径 | 认证 | 说明 |
-|------|------|------|------|
-| `GET` | `/api/settings/crawl-interval` | Bearer | 获取爬取间隔 |
-| `PUT` | `/api/settings/crawl-interval` | Bearer | 更新爬取间隔（热更新） |
-| `GET` | `/api/settings/scheduler` | Bearer | 查看调度器状态 |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/settings/system-info` | Bearer | Get system title and subtitle |
+| `PUT` | `/api/settings/system-info` | Bearer | Update system title and subtitle |
+| `GET` | `/api/settings/crawl-interval` | Bearer | Get crawl interval |
+| `PUT` | `/api/settings/crawl-interval` | Bearer | Update crawl interval (hot reload) |
+| `GET` | `/api/settings/tools` | Bearer | Get tool configuration |
+| `PUT` | `/api/settings/tools` | Bearer | Update tool configuration |
+| `GET` | `/api/settings/log-level` | Bearer | Get current log level |
+| `PUT` | `/api/settings/log-level` | Bearer | Update log level |
 
-详见 [Settings API](./settings.mdx)。
+See [Settings API](./settings.mdx) for details.
 
-### Proxy -- 资源代理
+### Holdings -- Portfolio Recommendations
 
-| 方法 | 路径 | 认证 | 说明 |
-|------|------|------|------|
-| `GET` | `/api/proxy/image` | 无 | 图片代理（绕过防盗链） |
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/api/holdings/generate` | Bearer | Generate holdings via LLM |
+| `GET` | `/api/holdings` | Bearer | List recommended holdings |
+| `DELETE` | `/api/holdings/{id}` | Bearer | Remove a holding |
 
-## 通用响应格式
+### Professor Index
 
-### 成功响应
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `POST` | `/api/professor-index/parse` | Bearer | Trigger professor index parsing |
+| `GET` | `/api/professor-index/parse/status` | Bearer | Latest parse task status |
+| `GET` | `/api/professor-index/parse/history` | Bearer | Parse task history |
+| `GET` | `/api/professor-index/interval` | Bearer | Get parse interval (days) |
+| `PUT` | `/api/professor-index/interval` | Bearer | Update parse interval |
 
-大部分端点返回 JSON 对象或数组。具体格式因端点而异，请参考各端点文档。
+### Proxy -- Resource Proxy
 
-### 错误响应
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| `GET` | `/api/proxy/image` | None | Image proxy (anti-hotlink bypass) |
 
-所有错误均遵循统一的 JSON 格式：
+## Common Response Formats
+
+### Success Response
+
+Most endpoints return a JSON object or array. The exact schema varies per endpoint -- consult the individual endpoint documentation.
+
+### Error Response
+
+All errors follow a unified JSON structure:
 
 ```json
 {
-  "detail": "错误描述信息"
+  "detail": "Human-readable error description"
 }
 ```
 
-### 常见 HTTP 状态码
+### HTTP Status Codes
 
-| 状态码 | 含义 | 常见原因 |
-|--------|------|---------|
-| `200` | 成功 | 请求正常处理 |
-| `400` | 请求参数错误 | 平台未配置、参数校验失败 |
-| `401` | 未认证 | Token 缺失、无效或已过期 |
-| `404` | 资源不存在 | 路径或资源 ID 不存在 |
-| `409` | 冲突 | 已有爬取任务在运行 |
-| `429` | 请求过于频繁 | 公共聊天每日次数用完 |
-| `500` | 服务器内部错误 | 未捕获的异常 |
-| `503` | 服务不可用 | 管理员密码未配置 |
+| Status Code | Meaning | Common Causes |
+|-------------|---------|---------------|
+| `200` | OK | Request processed successfully |
+| `400` | Bad Request | Platform not configured, validation failure |
+| `401` | Unauthorized | Missing, invalid, or expired token |
+| `404` | Not Found | Path or resource ID does not exist |
+| `409` | Conflict | A crawl task is already running |
+| `422` | Unprocessable Entity | Request body validation error |
+| `429` | Too Many Requests | Daily public chat quota exhausted |
+| `500` | Internal Server Error | Unhandled exception |
+| `503` | Service Unavailable | Admin password not configured |
 
-### SSE 流式响应
+## SSE Streaming Format
 
-聊天类端点（`POST /api/dashboard/chat` 和 `POST /api/chat`）使用 **Server-Sent Events** 流式返回 LLM 生成的文本。
+Chat endpoints (`POST /api/dashboard/chat` and `POST /api/chat`) use **Server-Sent Events** to stream LLM-generated text in real time.
 
-**格式说明：**
+### Dashboard Chat Format (Plain Text Stream)
+
+The public dashboard chat uses a simple text-delta SSE format:
 
 ```
-data: 你好
-data: ，
-data: 根据
-data: 参考资料
+data: According
+data:  to
+data:  the
+data:  latest
+data:  posts
 data: ...
 data: [DONE]
 ```
 
-- 每条消息以 `data: ` 为前缀
-- 消息之间以 `\n\n`（双换行）分隔
-- 流结束时发送 `data: [DONE]`
-- 客户端应逐条拼接 `data:` 后的内容以获得完整回答
+### Admin Chat Format (Vercel AI SDK UI Message Stream)
 
-**响应头：**
+The admin chat endpoint (`POST /api/chat`) uses the **Vercel AI SDK UI Message Stream** protocol, which supports structured events for text streaming and tool calling:
+
+```
+data: {"type":"start","messageId":"msg-abc123"}
+
+data: {"type":"text-start","id":"text-0"}
+
+data: {"type":"text-delta","id":"text-0","delta":"According"}
+data: {"type":"text-delta","id":"text-0","delta":" to"}
+data: {"type":"text-delta","id":"text-0","delta":" the"}
+data: {"type":"text-delta","id":"text-0","delta":" latest"}
+
+data: {"type":"text-end","id":"text-0"}
+
+data: {"type":"finish"}
+data: [DONE]
+```
+
+### Common SSE Rules
+
+- Every message is prefixed with `data: `
+- Messages are separated by `\n\n` (double newline)
+- The stream terminates with `data: [DONE]`
+- Clients should concatenate text deltas to build the full response
+
+### Response Headers
 
 ```
 Content-Type: text/event-stream
 Cache-Control: no-cache
-X-Accel-Buffering: no    # 禁用 Nginx 缓冲
+X-Accel-Buffering: no    # Disable Nginx buffering
 ```
 
-## CORS 配置
+:::tip SSE Client Libraries
+For the admin chat endpoint, use the Vercel AI SDK's `useChat` hook or `readUIMessageStream` utility. For the dashboard chat, a standard `EventSource` or `fetch` + `ReadableStream` parser is sufficient.
+:::
 
-开发模式下，后端允许以下来源的跨域请求：
+## CORS Configuration
 
-- `http://localhost:5173`（Vite 开发服务器）
+In development mode, the backend allows cross-origin requests from:
+
+- `http://localhost:5173` (Vite dev server)
 - `http://localhost:3000`
 
-生产环境请通过 Nginx 反向代理统一域名，或修改 CORS 配置。
+In production, use an Nginx reverse proxy to serve frontend and backend under the same domain, or update the CORS configuration accordingly.

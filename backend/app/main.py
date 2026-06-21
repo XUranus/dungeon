@@ -7,7 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import init_db
 from app.config import settings
-from app.routers import chat, topics, sources, proxy, auth, dashboard, holdings
+from app.routers import chat, topics, sources, proxy, auth, dashboard, holdings, professor_index
 from app.routers import settings as settings_router
 from app.utils.scheduler import setup_scheduler, shutdown_scheduler
 
@@ -63,6 +63,8 @@ app.include_router(sources.router)
 app.include_router(settings_router.router)
 app.include_router(settings_router.public_router)
 app.include_router(holdings.router)
+app.include_router(professor_index.router)
+app.include_router(professor_index.public_router)
 app.include_router(proxy.router)
 
 

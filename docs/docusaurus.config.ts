@@ -18,8 +18,12 @@ const config: Config = {
   onBrokenMarkdownLinks: 'warn',
 
   i18n: {
-    defaultLocale: 'zh-Hans',
-    locales: ['zh-Hans'],
+    defaultLocale: 'en',
+    locales: ['en', 'zh-Hans'],
+    localeConfigs: {
+      en: { label: 'English' },
+      'zh-Hans': { label: '简体中文' },
+    },
   },
 
   themes: ['@docusaurus/theme-mermaid'],
@@ -56,11 +60,15 @@ const config: Config = {
           type: 'docSidebar',
           sidebarId: 'tutorialSidebar',
           position: 'left',
-          label: '文档',
+          label: 'Docs',
         },
         {
           href: 'https://github.com',
           label: 'GitHub',
+          position: 'right',
+        },
+        {
+          type: 'localeDropdown',
           position: 'right',
         },
       ],
@@ -69,14 +77,14 @@ const config: Config = {
       style: 'dark',
       links: [
         {
-          title: '文档',
+          title: 'Documentation',
           items: [
-            { label: '快速开始', to: '/intro' },
-            { label: '架构设计', to: '/architecture' },
+            { label: 'Getting Started', to: '/' },
+            { label: 'Architecture', to: '/architecture/overview' },
           ],
         },
         {
-          title: '技术栈',
+          title: 'Tech Stack',
           items: [
             { label: 'FastAPI', href: 'https://fastapi.tiangolo.com/' },
             { label: 'React', href: 'https://react.dev/' },

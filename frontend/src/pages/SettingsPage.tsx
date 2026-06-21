@@ -1,11 +1,13 @@
-import { useState, useEffect } from 'react'
-import { Loader2, Check, Wrench, Globe, Key, TrendingUp, BarChart3, Sparkles, Trash2, Settings, Database, Bot, Activity } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { Loader2, Check, Settings, Database, Bot, Activity, Sparkles, Wrench, Key, Globe, TrendingUp, BarChart3 } from 'lucide-react'
 import {
   fetchCrawlInterval, updateCrawlInterval, type CrawlIntervalResponse,
   fetchSystemInfo, updateSystemInfo, type SystemInfo,
   fetchToolsSettings, updateToolsSettings, type ToolsSettings,
   fetchLogLevel, updateLogLevel,
-  generateHoldings, fetchAllHoldings, deleteHolding, type RecommendedHolding,
+  startProfessorIndexParse, fetchProfessorIndexParseStatus, fetchProfessorIndexParseHistory,
+  fetchProfessorIndexInterval, updateProfessorIndexInterval,
+  type ParseTask,
 } from '../services/api'
 
 const INTERVAL_OPTIONS = [
@@ -15,7 +17,21 @@ const INTERVAL_OPTIONS = [
   { value: 60, label: '每 1 小时' },
 ]
 
+const PI_INTERVAL_OPTIONS = [
+  { value: 1, label: '每 1 天' },
+  { value: 7, label: '每 7 天' },
+  { value: 15, label: '每 15 天' },
+  { value: 30, label: '每 30 天' },
+]
+
 const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
+
+const STATUS_LABELS: Record<string, string> = {
+  pending: '等待中',
+  running: '运行中',
+  done: '已完成',
+  error: '失败',
+}
 
 const TABS = [
   { key: 'basic', label: '基础', icon: Settings },
@@ -51,12 +67,53 @@ export default function SettingsPage() {
   const [logSaving, setLogSaving] = useState(false)
   const [logSaved, setLogSaved] = useState(false)
 
-  // ---- Holdings ----
-  const [holdings, setHoldings] = useState<RecommendedHolding[]>([])
-  const [holdingsLoading, setHoldingsLoading] = useState(true)
-  const [generating, setGenerating] = useState(false)
-  const [generateResult, setGenerateResult] = useState<string | null>(null)
-  const [deletingId, setDeletingId] = useState<number | null>(null)
+  // ---- Professor Index ----
+  const [piInterval, setPiInterval] = useState(7)
+  const [piIntervalSaving, setPiIntervalSaving] = useState(false)
+  const [piIntervalSaved, setPiIntervalSaved] = useState(false)
+  const [piParsing, setPiParsing] = useState(false)
+  const [piStatus, setPiStatus] = useState<ParseTask | null>(null)
+  const [piHistory, setPiHistory] = useState<ParseTask[]>([])
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  const loadPiHistory = useCallback(async () => {
+    try {
+      const history = await fetchProfessorIndexParseHistory()
+      setPiHistory(history)
+    } catch { /* ignore */ }
+  }, [])
+
+  const loadPiStatus = useCallback(async () => {
+    try {
+      const s = await fetchProfessorIndexParseStatus()
+      if ('status' in s && s.status !== 'idle') {
+        setPiStatus(s as ParseTask)
+        return s as ParseTask
+      }
+      setPiStatus(null)
+      return null
+    } catch { return null }
+  }, [])
+
+  // 轮询状态
+  const startPolling = useCallback(() => {
+    if (pollRef.current) return
+    pollRef.current = setInterval(async () => {
+      const s = await loadPiStatus()
+      if (s && s.status !== 'pending' && s.status !== 'running') {
+        stopPolling()
+        setPiParsing(false)
+        loadPiHistory()
+      }
+    }, 3000)
+  }, [loadPiStatus, loadPiHistory])
+
+  const stopPolling = useCallback(() => {
+    if (pollRef.current) {
+      clearInterval(pollRef.current)
+      pollRef.current = null
+    }
+  }, [])
 
   useEffect(() => {
     Promise.all([
@@ -64,9 +121,12 @@ export default function SettingsPage() {
       fetchCrawlInterval().then(setCrawlInterval),
       fetchToolsSettings().then(setToolsSettings),
       fetchLogLevel().then((res) => setLogLevel(res.level)),
-      fetchAllHoldings().then(setHoldings).catch(() => {}),
-    ]).finally(() => { setLoading(false); setHoldingsLoading(false) })
-  }, [])
+      fetchProfessorIndexInterval().then((res) => setPiInterval(res.interval_days)),
+      loadPiStatus(),
+      loadPiHistory(),
+    ]).finally(() => { setLoading(false) })
+    return () => { stopPolling() }
+  }, [loadPiStatus, loadPiHistory, stopPolling])
 
   // ── Handlers ──
 
@@ -129,27 +189,31 @@ export default function SettingsPage() {
     } catch { /* ignore */ } finally { setLogSaving(false) }
   }
 
-  const handleGenerateHoldings = async () => {
-    setGenerating(true)
-    setGenerateResult(null)
+  const handlePiIntervalChange = async (days: number) => {
+    setPiIntervalSaving(true)
+    setPiIntervalSaved(false)
     try {
-      const res = await generateHoldings()
-      setGenerateResult(res.message)
-      const updated = await fetchAllHoldings()
-      setHoldings(updated)
-      setTimeout(() => setGenerateResult(null), 5000)
-    } catch {
-      setGenerateResult('生成失败，请检查后端日志')
-      setTimeout(() => setGenerateResult(null), 5000)
-    } finally { setGenerating(false) }
+      const res = await updateProfessorIndexInterval(days)
+      setPiInterval(res.interval_days)
+      setPiIntervalSaved(true)
+      setTimeout(() => setPiIntervalSaved(false), 2000)
+    } catch { /* ignore */ } finally { setPiIntervalSaving(false) }
   }
 
-  const handleDeleteHolding = async (id: number) => {
-    setDeletingId(id)
+  const handleParseProfessorIndex = async () => {
+    setPiParsing(true)
     try {
-      await deleteHolding(id)
-      setHoldings(holdings.filter((h) => h.id !== id))
-    } catch { /* ignore */ } finally { setDeletingId(null) }
+      await startProfessorIndexParse()
+      startPolling()
+    } catch (e) {
+      const msg = (e as Error)?.message || ''
+      if (msg.includes('409')) {
+        // 已有任务在运行，开始轮询
+        startPolling()
+      } else {
+        setPiParsing(false)
+      }
+    }
   }
 
   // ── Tab Content ──
@@ -420,79 +484,145 @@ export default function SettingsPage() {
     </div>
   )
 
+  const isRunning = piStatus && (piStatus.status === 'pending' || piStatus.status === 'running')
+
   const renderHoldings = () => (
-    <section className="glass-card dark:glass-card-dark rounded-xl p-5">
-      <h2 className="text-lg font-medium mb-1 text-neutral-800 dark:text-neutral-200 flex items-center gap-2">
-        <Sparkles className="w-5 h-5 text-neutral-400" />
-        推荐持仓管理
-      </h2>
-      <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-4">
-        AI 分析最近爬取的大V观点，自动提取推荐持仓。生成后展示在公共主页。
-      </p>
-      <button
-        onClick={handleGenerateHoldings}
-        disabled={generating}
-        className="bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-xl px-4 py-2.5 text-sm hover:bg-neutral-800 dark:hover:bg-neutral-100 disabled:opacity-50 transition-all flex items-center gap-1.5"
-      >
-        {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-        {generating ? '生成中...' : '一键生成推荐持仓'}
-      </button>
-      <div className="mt-3 h-5">
-        {generateResult && (
-          <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
-            <Check className="w-3 h-3" /> {generateResult}
-          </span>
-        )}
-      </div>
-      {holdingsLoading ? (
-        <div className="flex items-center gap-2 text-neutral-400 mt-3">
-          <Loader2 className="w-4 h-4 animate-spin" />
-          <span className="text-sm">加载中...</span>
-        </div>
-      ) : holdings.length > 0 ? (
-        <div className="mt-3 space-y-2">
-          <div className="text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">
-            当前持仓 ({holdings.length})
-          </div>
-          {holdings.map((h) => {
-            const sentimentLabel = h.sentiment === 'bullish' ? '看多' : h.sentiment === 'bearish' ? '看空' : '中性'
-            const sentimentColor = h.sentiment === 'bullish'
-              ? 'text-green-600 dark:text-green-400'
-              : h.sentiment === 'bearish'
-                ? 'text-red-600 dark:text-red-400'
-                : 'text-neutral-500 dark:text-neutral-400'
-            return (
-              <div key={h.id} className="flex items-center gap-3 p-3 rounded-lg bg-neutral-50 dark:bg-neutral-800/50">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm font-medium text-neutral-800 dark:text-neutral-200">{h.stock_name}</span>
-                    {h.stock_code && <span className="text-xs text-neutral-400">{h.stock_code}</span>}
-                    <span className={`text-xs font-medium ${sentimentColor}`}>{sentimentLabel}</span>
-                  </div>
-                  <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5 truncate">{h.reason}</p>
-                  {h.source_kols && h.source_kols.length > 0 && (
-                    <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-0.5 truncate">
-                      来源: {h.source_kols.join('、')}
-                    </p>
-                  )}
-                </div>
-                <button
-                  onClick={() => handleDeleteHolding(h.id)}
-                  disabled={deletingId === h.id}
-                  className="text-neutral-400 hover:text-red-500 dark:hover:text-red-400 transition-colors p-1"
-                >
-                  {deletingId === h.id ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-            )
-          })}
-        </div>
-      ) : (
-        <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-3">
-          暂无推荐持仓，点击上方按钮生成
+    <div className="space-y-6">
+      <section className="glass-card dark:glass-card-dark rounded-xl p-5">
+        <h2 className="text-lg font-medium mb-1 text-neutral-800 dark:text-neutral-200 flex items-center gap-2">
+          <Sparkles className="w-5 h-5 text-neutral-400" />
+          教授指数解析
+        </h2>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-4">
+          从历史文章中提取"教授指数"的持仓配置（内地版/全球版），解析后展示在公共主页。
         </p>
-      )}
-    </section>
+
+        {/* 间隔配置 */}
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">自动解析间隔</label>
+          <div className="grid grid-cols-4 gap-2">
+            {PI_INTERVAL_OPTIONS.map((opt) => {
+              const isActive = piInterval === opt.value
+              return (
+                <button
+                  key={opt.value}
+                  onClick={() => handlePiIntervalChange(opt.value)}
+                  disabled={piIntervalSaving}
+                  className={`relative px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
+                    isActive
+                      ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-900'
+                      : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700'
+                  } disabled:opacity-50`}
+                >
+                  {opt.label}
+                  {isActive && <Check className="w-3 h-3 absolute top-1 right-1 opacity-60" />}
+                </button>
+              )
+            })}
+          </div>
+          <div className="mt-2 h-5">
+            {piIntervalSaving && (
+              <span className="text-xs text-neutral-400 flex items-center gap-1">
+                <Loader2 className="w-3 h-3 animate-spin" /> 保存中...
+              </span>
+            )}
+            {piIntervalSaved && (
+              <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
+                <Check className="w-3 h-3" /> 已保存
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* 手动触发 */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleParseProfessorIndex}
+            disabled={!!isRunning || piParsing}
+            className="bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-xl px-4 py-2.5 text-sm hover:bg-neutral-800 dark:hover:bg-neutral-100 disabled:opacity-50 transition-all flex items-center gap-1.5"
+          >
+            {(isRunning || piParsing) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+            {isRunning ? '解析中...' : '手动触发解析'}
+          </button>
+          {isRunning && (
+            <span className="text-xs text-neutral-500 dark:text-neutral-400">
+              任务正在后台运行，请稍候...
+            </span>
+          )}
+          {piStatus && piStatus.status === 'done' && (
+            <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
+              <Check className="w-3 h-3" />
+              {piStatus.message || `完成: 内地版${piStatus.china_count}项, 全球版${piStatus.global_count}项`}
+            </span>
+          )}
+          {piStatus && piStatus.status === 'error' && (
+            <span className="text-xs text-red-500 dark:text-red-400">
+              失败: {piStatus.error_message || '未知错误'}
+            </span>
+          )}
+        </div>
+
+        <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-3">
+          点击后将自动抓取最新专栏文章，再由 AI 分析所有历史文章提取持仓配置。
+        </p>
+      </section>
+
+      {/* 历史记录 */}
+      <section className="glass-card dark:glass-card-dark rounded-xl p-5">
+        <h2 className="text-sm font-medium mb-3 text-neutral-800 dark:text-neutral-200">解析历史</h2>
+        {piHistory.length === 0 ? (
+          <p className="text-xs text-neutral-400 dark:text-neutral-500">暂无解析记录</p>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-neutral-200 dark:border-neutral-700">
+                  <th className="text-left py-2 pr-3 font-medium text-neutral-500 dark:text-neutral-400">#</th>
+                  <th className="text-left py-2 pr-3 font-medium text-neutral-500 dark:text-neutral-400">触发</th>
+                  <th className="text-left py-2 pr-3 font-medium text-neutral-500 dark:text-neutral-400">状态</th>
+                  <th className="text-right py-2 pr-3 font-medium text-neutral-500 dark:text-neutral-400">文章</th>
+                  <th className="text-right py-2 pr-3 font-medium text-neutral-500 dark:text-neutral-400">内地版</th>
+                  <th className="text-right py-2 pr-3 font-medium text-neutral-500 dark:text-neutral-400">全球版</th>
+                  <th className="text-left py-2 font-medium text-neutral-500 dark:text-neutral-400">时间</th>
+                </tr>
+              </thead>
+              <tbody>
+                {piHistory.map((t) => (
+                  <tr key={t.id} className="border-b border-neutral-100 dark:border-neutral-800 last:border-0">
+                    <td className="py-2 pr-3 text-neutral-500 dark:text-neutral-400">{t.id}</td>
+                    <td className="py-2 pr-3">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                        t.triggered_by === 'schedule'
+                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                          : 'bg-neutral-100 text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300'
+                      }`}>
+                        {t.triggered_by === 'schedule' ? '定时' : '手动'}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                        t.status === 'done' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                        : t.status === 'error' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                        : t.status === 'running' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                        : 'bg-neutral-100 text-neutral-500 dark:bg-neutral-700 dark:text-neutral-400'
+                      }`}>
+                        {STATUS_LABELS[t.status] || t.status}
+                      </span>
+                    </td>
+                    <td className="py-2 pr-3 text-right text-neutral-600 dark:text-neutral-300">{t.articles_fetched || '-'}</td>
+                    <td className="py-2 pr-3 text-right text-neutral-600 dark:text-neutral-300">{t.china_count || '-'}</td>
+                    <td className="py-2 pr-3 text-right text-neutral-600 dark:text-neutral-300">{t.global_count || '-'}</td>
+                    <td className="py-2 text-neutral-400 dark:text-neutral-500 whitespace-nowrap">
+                      {t.started_at ? new Date(t.started_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
   )
 
   const tabContent: Record<TabKey, () => React.JSX.Element> = {

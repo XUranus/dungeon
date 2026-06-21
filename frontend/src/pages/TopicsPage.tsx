@@ -42,7 +42,9 @@ function getTopicPreview(t: Topic): React.ReactNode {
 
   return (
     <>
-      <p className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2">{t.content}</p>
+      <div className="text-sm text-gray-600 dark:text-gray-400 line-clamp-2">
+        <RichContent content={t.content} compact />
+      </div>
       {hasImages && <ImageThumbnails images={t.images!} />}
     </>
   )
@@ -137,7 +139,9 @@ function CommentItem({ comment }: { comment: Comment }) {
           </span>
         )}
       </div>
-      <p className="text-gray-600 dark:text-gray-400 text-sm whitespace-pre-wrap">{comment.content}</p>
+      <div className="text-gray-600 dark:text-gray-400 text-sm">
+        <RichContent content={comment.content} />
+      </div>
       {hasImages && (
         <div className="flex flex-wrap gap-1.5 mt-2">
           {comment.images!.map((img, i) => (

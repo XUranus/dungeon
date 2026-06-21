@@ -1,15 +1,22 @@
 import { useState, useEffect, useRef } from 'react'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
-import { Loader2, Send, TrendingUp, TrendingDown, Minus, Signal, Wifi, BatteryFull, ChevronUp, ChevronDown, Sparkles } from 'lucide-react'
+import {
+  Loader2, Send, ArrowUpRight, Heart, MessageSquare,
+  TrendingUp, Globe, Sparkles, ChevronRight,
+} from 'lucide-react'
 import Logo from '../components/Logo'
+import { MarkdownMessage } from '../components/chat/MarkdownMessage'
+import RichContent from '../components/content/RichContent'
+import DonutChart, { type DonutSegment } from '../components/DonutChart'
 import { parseQA } from '../utils/qa'
 import {
   fetchSystemInfo,
   fetchDashboardSummary,
-  fetchHoldings,
+  fetchProfessorIndex,
   type DashboardSummaryItem,
-  type RecommendedHolding,
+  type ProfessorIndexData,
+  type ProfessorIndexVersion,
 } from '../services/api'
 import { getVisitorId } from '../utils/visitor'
 
@@ -18,19 +25,20 @@ const PLATFORM_LABELS: Record<string, string> = {
   zhihu: '知乎', xueqiu: '雪球', xiaohongshu: '小红书',
   weibo: '微博', douyin: '抖音', zsxq: '星球',
 }
+const PLATFORM_ICONS: Record<string, string> = {
+  zhihu: '知', xueqiu: '雪', xiaohongshu: '红',
+  weibo: '微', douyin: '抖', zsxq: '星',
+}
 const PLATFORM_COLORS: Record<string, string> = {
   zhihu: '#3B82F6', xueqiu: '#F97316', xiaohongshu: '#EF4444',
-  weibo: '#F43F5E', douyin: '#A3A3A3', zsxq: '#22C55E',
+  weibo: '#F43F5E', douyin: '#A3A3A3', zsxq: '#10B981',
 }
-const PLATFORM_BADGE_OVERRIDES: Record<string, { bg: string; color: string }> = {
-  zhihu: { bg: '#1D4ED8', color: '#FFFFFF' },
-  zsxq:  { bg: '#15803D', color: '#FFFFFF' },
-}
-const SENTIMENT_CONFIG = {
-  bullish: { label: '看多', color: '#22C55E', icon: TrendingUp },
-  bearish: { label: '看空', color: '#EF4444', icon: TrendingDown },
-  neutral: { label: '中性', color: '#A3A3A3', icon: Minus },
-}
+
+/* ── Donut color palette ── */
+const DONUT_COLORS = [
+  '#10B981', '#3B82F6', '#F59E0B', '#EF4444', '#8B5CF6',
+  '#EC4899', '#14B8A6', '#F97316', '#6366F1', '#84CC16',
+]
 
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return ''
@@ -45,141 +53,218 @@ function formatDate(dateStr: string | null): string {
   return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
 }
 
-/* ── Auto-scrolling ticker ── */
-function ScrollTicker({ items }: { items: DashboardSummaryItem[] }) {
-  const [paused, setPaused] = useState(false)
-  const [currentIndex, setCurrentIndex] = useState(0)
-  const intervalRef = useRef<ReturnType<typeof setInterval> | undefined>(undefined)
+function holdingsToSegments(data: ProfessorIndexVersion): DonutSegment[] {
+  return data.holdings
+    .filter(h => h.weight != null && h.weight > 0)
+    .map((h, i) => ({
+      label: h.name,
+      value: h.weight!,
+      color: DONUT_COLORS[i % DONUT_COLORS.length],
+      code: h.code,
+      market: h.market,
+    }))
+}
 
-  useEffect(() => {
-    if (items.length <= 1 || paused) return
-    intervalRef.current = setInterval(() => {
-      setCurrentIndex((prev) => (prev + 1) % items.length)
-    }, 3500)
-    return () => clearInterval(intervalRef.current)
-  }, [items.length, paused])
+/* ── Hero Section ── */
+function HeroSection({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <section className="landing-hero">
+      <div className="landing-hero-glow" />
+      <div className="landing-hero-content">
+        <div className="landing-hero-badge">
+          <Sparkles className="w-3.5 h-3.5" />
+          <span>AI 驱动的智能投资研究</span>
+        </div>
+        <h1 className="landing-hero-title">{title}</h1>
+        <p className="landing-hero-subtitle">{subtitle}</p>
+      </div>
+    </section>
+  )
+}
 
-  const handlePrev = () => { setPaused(true); setCurrentIndex((p) => (p - 1 + items.length) % items.length) }
-  const handleNext = () => { setPaused(true); setCurrentIndex((p) => (p + 1) % items.length) }
-
-  if (items.length === 0) return null
-
-  const visible = [items[currentIndex % items.length]]
+/* ── Portfolio Section (Professor Index) ── */
+function PortfolioSection({ data }: { data: ProfessorIndexData }) {
+  const versions = ['内地版', '全球版'].filter(v => data[v])
+  if (versions.length === 0) return null
 
   return (
-    <div
-      className="relative h-full flex flex-col"
-      onMouseEnter={() => setPaused(true)}
-      onMouseLeave={() => setPaused(false)}
-    >
-      {/* Nav arrows */}
-      <div className="absolute right-2 top-2 z-10 flex flex-col gap-1">
-        <button
-          onClick={handlePrev}
-          className="w-6 h-6 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
-        >
-          <ChevronUp className="w-3.5 h-3.5 text-neutral-400" />
-        </button>
-        <button
-          onClick={handleNext}
-          className="w-6 h-6 rounded-full bg-white/10 hover:bg-white/20 flex items-center justify-center transition-colors"
-        >
-          <ChevronDown className="w-3.5 h-3.5 text-neutral-400" />
-        </button>
+    <section className="landing-section">
+      <div className="landing-section-header">
+        <TrendingUp className="w-4 h-4 text-emerald-400" />
+        <h2>持仓配置</h2>
+        <span className="landing-section-tag">教授指数</span>
       </div>
-
-      {/* Cards */}
-      <div className="flex-1 space-y-3 overflow-hidden">
-        {visible.map((item, i) => {
-          const platColor = PLATFORM_COLORS[item.platform] || '#A3A3A3'
-          const isQA = item.content_type === 'q&a'
-          const qaParts = isQA ? parseQA(item.content_preview) : null
+      <div className="landing-portfolio-grid">
+        {versions.map((ver, vi) => {
+          const snap = data[ver]!
+          const segments = holdingsToSegments(snap)
+          const hasWeights = segments.length > 0
           return (
             <div
-              key={`${item.id}-${currentIndex}-${i}`}
-              className="rounded-xl p-5 transition-all duration-500 ease-out cursor-pointer hover:scale-[1.01]"
-              style={{
-                background: `linear-gradient(135deg, ${platColor}08, ${platColor}04)`,
-                border: `1px solid ${platColor}20`,
-              }}
+              key={ver}
+              className="landing-card landing-portfolio-card"
+              style={{ animationDelay: `${vi * 100}ms` }}
             >
-              {/* Header */}
-              <div className="flex items-center gap-2 mb-3">
-                <span
-                  className="text-sm font-bold px-2.5 py-0.5 rounded-full"
-                  style={PLATFORM_BADGE_OVERRIDES[item.platform] || { background: `${platColor}20`, color: platColor }}
-                >
-                  {PLATFORM_LABELS[item.platform] || item.platform}
-                </span>
-                {isQA && (
-                  <span className="text-sm px-2 py-0.5 rounded bg-white/5 text-neutral-400">问答</span>
-                )}
-                {item.title && (
-                  <span className="text-sm text-neutral-500 dark:text-neutral-400 truncate flex-1">
-                    {item.title}
+              <div className="landing-card-header">
+                <div className="flex items-center gap-2">
+                  {ver === '内地版' ? (
+                    <TrendingUp className="w-4 h-4 text-emerald-400" />
+                  ) : (
+                    <Globe className="w-4 h-4 text-blue-400" />
+                  )}
+                  <span className="landing-card-title">{ver}</span>
+                </div>
+                {snap.snapshot_at && (
+                  <span className="text-xs text-neutral-600">
+                    {new Date(snap.snapshot_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
                   </span>
                 )}
               </div>
 
-              {/* Content */}
-              {isQA && qaParts && qaParts.length > 0 ? (
-                <div className="space-y-2.5">
-                  {qaParts.map((part, pi) => (
-                    <div
-                      key={pi}
-                      className="rounded-lg px-4 py-3"
-                      style={{
-                        background: part.type === 'question' ? 'rgba(255,255,255,0.06)' : 'rgba(255,255,255,0.03)',
-                        borderLeft: `2px solid ${part.type === 'question' ? '#A3A3A3' : '#525252'}`,
-                      }}
-                    >
-                      <div className="flex items-center gap-1.5 mb-1.5">
-                        <span className="text-sm text-neutral-400">
-                          {part.type === 'question' ? '❓ 提问' : '💬 回答'}
-                        </span>
-                      </div>
-                      <p className="text-sm text-neutral-300 line-clamp-3 leading-relaxed">
-                        {part.text}
-                      </p>
+              {snap.notes && (
+                <p className="landing-portfolio-notes">{snap.notes}</p>
+              )}
+
+              {hasWeights ? (
+                <div className="landing-donut-wrapper">
+                  <DonutChart
+                    segments={segments}
+                    size={180}
+                    strokeWidth={24}
+                    centerLabel="只标的"
+                    centerValue={String(segments.length)}
+                  />
+                </div>
+              ) : (
+                <div className="landing-holdings-plain">
+                  {snap.holdings.map((h, i) => (
+                    <div key={i} className="landing-holding-chip">
+                      <span className="landing-holding-name">{h.name}</span>
+                      {h.code && <span className="landing-holding-code">{h.code}</span>}
+                      <span className="landing-holding-market">{h.market}</span>
                     </div>
                   ))}
                 </div>
-              ) : (
-                <p className="text-base text-neutral-300 dark:text-neutral-300 line-clamp-4 leading-relaxed">
-                  {item.content_preview}
-                </p>
               )}
+            </div>
+          )
+        })}
+      </div>
+    </section>
+  )
+}
 
-              {/* Footer */}
-              <div className="flex items-center gap-3 mt-3 text-sm text-neutral-500">
-                {item.like_count > 0 && <span>👍 {item.like_count}</span>}
-                <span>{formatDate(item.published_at)}</span>
+/* ── 市场动态时间线 ── */
+function TimelineSection({ items, loading }: { items: DashboardSummaryItem[]; loading: boolean }) {
+  if (loading) {
+    return (
+      <section className="landing-section">
+        <div className="landing-section-header">
+          <MessageSquare className="w-4 h-4 text-emerald-400" />
+          <h2>市场动态</h2>
+        </div>
+        <div className="flex items-center justify-center py-16">
+          <Loader2 className="w-5 h-5 animate-spin text-neutral-600" />
+        </div>
+      </section>
+    )
+  }
+
+  return (
+    <section className="landing-section">
+      <div className="landing-section-header">
+        <MessageSquare className="w-4 h-4 text-emerald-400" />
+        <h2>市场动态</h2>
+        <span className="landing-section-tag">{items.length} 条动态</span>
+      </div>
+      <div className="landing-timeline">
+        {items.map((item, i) => {
+          const color = PLATFORM_COLORS[item.platform] || '#A3A3A3'
+          const isQA = item.content_type === 'q&a'
+          const qaParts = isQA ? parseQA(item.content_preview) : null
+          return (
+            <div
+              key={item.id}
+              className="landing-timeline-item"
+              style={{ animationDelay: `${i * 60}ms` }}
+            >
+              <div className="landing-timeline-dot" style={{ background: color }} />
+              <div className="landing-timeline-line" />
+              <div className="landing-card landing-insight-card">
+                <div className="landing-insight-header">
+                  <span
+                    className="landing-platform-badge"
+                    style={{ background: `${color}18`, color, border: `1px solid ${color}30` }}
+                  >
+                    {PLATFORM_ICONS[item.platform] || '?'}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-medium text-neutral-400">
+                        {PLATFORM_LABELS[item.platform] || item.platform}
+                      </span>
+                      {isQA && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/5 text-neutral-500">
+                          问答
+                        </span>
+                      )}
+                    </div>
+                    {item.title && (
+                      <p className="text-sm text-neutral-300 truncate mt-0.5">{item.title}</p>
+                    )}
+                  </div>
+                  <span className="text-xs text-neutral-600 flex-shrink-0 ml-2">
+                    {formatDate(item.published_at)}
+                  </span>
+                </div>
+
+                {isQA && qaParts && qaParts.length > 0 ? (
+                  <div className="landing-insight-qa">
+                    {qaParts.slice(0, 2).map((part, pi) => (
+                      <div key={pi} className="landing-insight-qa-part">
+                        <span className="text-[10px] text-neutral-500 font-medium">
+                          {part.type === 'question' ? '提问' : '回答'}
+                        </span>
+                        <div className="text-xs text-neutral-400 line-clamp-2 leading-relaxed">
+                          <RichContent content={part.text} compact />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="text-xs text-neutral-400 line-clamp-2 leading-relaxed mt-2">
+                    <RichContent content={item.content_preview} compact />
+                  </div>
+                )}
+
+                <div className="flex items-center gap-3 mt-2">
+                  {item.like_count > 0 && (
+                    <span className="flex items-center gap-1 text-[11px] text-neutral-600">
+                      <Heart className="w-3 h-3" /> {item.like_count}
+                    </span>
+                  )}
+                  {item.url && (
+                    <a
+                      href={item.url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-0.5 text-[11px] text-neutral-600 hover:text-emerald-400 transition-colors ml-auto"
+                    >
+                      查看 <ArrowUpRight className="w-3 h-3" />
+                    </a>
+                  )}
+                </div>
               </div>
             </div>
           )
         })}
       </div>
-
-      {/* Dots indicator */}
-      <div className="flex justify-center gap-1.5 mt-3">
-        {items.map((_, i) => (
-          <button
-            key={i}
-            onClick={() => { setPaused(true); setCurrentIndex(i) }}
-            className="w-1.5 h-1.5 rounded-full transition-all duration-300"
-            style={{
-              background: i === currentIndex ? '#E5E5E5' : '#3A3A3A',
-              transform: i === currentIndex ? 'scale(1.3)' : 'scale(1)',
-            }}
-          />
-        ))}
-      </div>
-    </div>
+    </section>
   )
 }
 
-/* ── Phone Chat Mockup ── */
-function PhoneChat({
+/* ── AI 研究助手 ── */
+function ResearchAssistant({
   messages, status, chatRemaining, systemSubtitle, sendMessage,
 }: {
   messages: ReturnType<typeof useChat>['messages']
@@ -205,63 +290,52 @@ function PhoneChat({
     input.value = ''
   }
 
+  const suggestions = [
+    '最近大V们怎么看A股走势？',
+    '有哪些值得长期持有的股票？',
+    '半导体板块最近有什么观点？',
+  ]
+
   return (
-    <div className="phone-frame">
-      <div className="phone-notch" />
-      <div className="phone-statusbar">
-        <span className="text-xs font-medium">9:41</span>
-        <div className="flex items-center gap-1">
-          <Signal className="w-3 h-3" />
-          <Wifi className="w-3 h-3" />
-          <BatteryFull className="w-3.5 h-3.5" />
-        </div>
+    <section className="landing-section">
+      <div className="landing-section-header">
+        <Sparkles className="w-4 h-4 text-emerald-400" />
+        <h2>AI 研究助手</h2>
+        <span className="landing-section-tag">每日 {chatRemaining} 次</span>
       </div>
-
-      {/* Chat header */}
-      <div className="phone-header">
-        <div className="flex items-center gap-2">
-          <div className="w-8 h-8 rounded-full bg-gradient-to-br from-neutral-700 to-neutral-900 flex items-center justify-center">
-            <Logo className="text-neutral-200" size={16} />
-          </div>
-          <div>
-            <div className="text-sm font-semibold text-neutral-100">AI 助手</div>
-            <div className="text-xs text-green-400">在线</div>
-          </div>
-        </div>
-      </div>
-
-      {/* Messages */}
-      <div className="phone-messages">
-        {messages.length === 0 && !isLoading && (
-          <div className="flex flex-col items-center justify-center h-full text-center px-6">
-            <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-neutral-800/60 to-neutral-900/40 flex items-center justify-center mb-4">
-              <Logo className="text-neutral-400" size={32} />
+      <div className="landing-chat-container">
+        {/* Messages area */}
+        <div className="landing-chat-messages">
+          {messages.length === 0 && !isLoading && (
+            <div className="landing-chat-empty">
+              <div className="landing-chat-empty-icon">
+                <Logo className="text-emerald-400" size={28} />
+              </div>
+              <p className="text-sm text-neutral-400 mb-1">{systemSubtitle}</p>
+              <p className="text-xs text-neutral-600 mb-6">基于大V观点的 RAG 智能问答</p>
+              <div className="landing-suggestions">
+                {suggestions.map((q) => (
+                  <button
+                    key={q}
+                    onClick={() => sendMessage({ text: q })}
+                    className="landing-suggestion-btn"
+                  >
+                    {q}
+                    <ChevronRight className="w-3 h-3 flex-shrink-0 text-neutral-600" />
+                  </button>
+                ))}
+              </div>
             </div>
-            <p className="text-sm text-neutral-400 mb-1">{systemSubtitle}</p>
-            <p className="text-xs text-neutral-500 mb-4">每日 {chatRemaining} 次免费问答</p>
-            <div className="space-y-2 w-full">
-              {['最近大V们怎么看A股走势？', '有哪些值得长期持有的股票？', '半导体板块最近有什么观点？'].map((q) => (
-                <button
-                  key={q}
-                  onClick={() => sendMessage({ text: q })}
-                  className="w-full text-left text-xs text-neutral-400 bg-white/5 hover:bg-white/10 rounded-xl px-4 py-2.5 transition-colors border border-white/5"
-                >
-                  {q}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
+          )}
 
-        {messages.map((msg) => (
-          <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} mb-2`}>
-            <div className="max-w-[82%]">
+          {messages.map((msg) => (
+            <div key={msg.id} className={`landing-chat-msg ${msg.role === 'user' ? 'landing-chat-user' : 'landing-chat-ai'}`}>
               {msg.parts?.map((part, i) => {
                 if (part.type === 'text') {
                   return msg.role === 'user' ? (
-                    <div key={i} className="phone-bubble-user">{part.text}</div>
+                    <div key={i} className="landing-bubble-user">{part.text}</div>
                   ) : (
-                    <div key={i} className="phone-bubble-ai">
+                    <div key={i} className="landing-bubble-ai">
                       <MarkdownMessage content={part.text} />
                     </div>
                   )
@@ -274,52 +348,46 @@ function PhoneChat({
                   }
                   const toolName = String(ti.toolName || '')
                   return (
-                    <div key={i} className="phone-tool-card">
+                    <div key={i} className="landing-tool-card">
                       {ti.state === 'call' && <Loader2 className="w-3 h-3 animate-spin" />}
                       <span>{toolLabels[toolName] || toolName}</span>
-                      {ti.state === 'result' && <span className="text-green-400">✓</span>}
+                      {ti.state === 'result' && <span className="text-emerald-400">✓</span>}
                     </div>
                   )
                 }
                 return null
               })}
             </div>
-          </div>
-        ))}
+          ))}
 
-        {isLoading && messages.length > 0 && messages[messages.length - 1]?.role === 'user' && (
-          <div className="flex justify-start mb-2">
-            <div className="phone-bubble-ai flex items-center gap-2">
-              <div className="flex gap-1">
-                <span className="w-1.5 h-1.5 bg-neutral-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-1.5 h-1.5 bg-neutral-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-1.5 h-1.5 bg-neutral-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+          {isLoading && messages.length > 0 && messages[messages.length - 1]?.role === 'user' && (
+            <div className="landing-chat-msg landing-chat-ai">
+              <div className="landing-bubble-ai flex items-center gap-2">
+                <div className="flex gap-1">
+                  <span className="w-1.5 h-1.5 bg-neutral-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
+                  <span className="w-1.5 h-1.5 bg-neutral-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
+                  <span className="w-1.5 h-1.5 bg-neutral-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
+                </div>
               </div>
             </div>
-          </div>
-        )}
+          )}
+          <div ref={chatEndRef} />
+        </div>
 
-        <div ref={chatEndRef} />
+        {/* Input */}
+        <form onSubmit={handleSend} className="landing-chat-input-area">
+          <input
+            name="message"
+            placeholder="询问关于投资、市场、个股的问题..."
+            disabled={isLoading}
+            className="landing-chat-input"
+          />
+          <button type="submit" disabled={isLoading} className="landing-chat-send">
+            <Send className="w-4 h-4" />
+          </button>
+        </form>
       </div>
-
-      {/* Input */}
-      <form onSubmit={handleSend} className="phone-input-area">
-        <input
-          name="message"
-          placeholder="输入你的问题..."
-          disabled={isLoading}
-          className="phone-input"
-        />
-        <button type="submit" disabled={isLoading} className="phone-send-btn">
-          <Send className="w-4 h-4" />
-        </button>
-      </form>
-
-      {/* Home indicator */}
-      <div className="phone-home-indicator">
-        <div className="w-32 h-1 rounded-full bg-neutral-600" />
-      </div>
-    </div>
+    </section>
   )
 }
 
@@ -328,10 +396,9 @@ export default function DashboardPage() {
   const [systemTitle, setSystemTitle] = useState('财经观点问答')
   const [systemSubtitle, setSystemSubtitle] = useState('基于大V观点数据库的 RAG 问答助手')
   const [summaryItems, setSummaryItems] = useState<DashboardSummaryItem[]>([])
-  const [holdings, setHoldings] = useState<RecommendedHolding[]>([])
+  const [professorIndex, setProfessorIndex] = useState<ProfessorIndexData>({})
   const [chatRemaining, setChatRemaining] = useState(0)
   const [loadingSummary, setLoadingSummary] = useState(true)
-  const [loadingHoldings, setLoadingHoldings] = useState(true)
 
   const { messages, sendMessage, status } = useChat({
     transport: new DefaultChatTransport({
@@ -354,7 +421,7 @@ export default function DashboardPage() {
       })
       .catch(() => {})
 
-    fetchDashboardSummary(10)
+    fetchDashboardSummary(12)
       .then((data) => {
         setSummaryItems(data.items)
         setChatRemaining(data.chat_remaining)
@@ -362,97 +429,61 @@ export default function DashboardPage() {
       .catch(() => {})
       .finally(() => setLoadingSummary(false))
 
-    fetchHoldings()
-      .then(setHoldings)
+    fetchProfessorIndex()
+      .then(setProfessorIndex)
       .catch(() => {})
-      .finally(() => setLoadingHoldings(false))
   }, [])
 
   return (
-    <div className="dashboard-root">
-      {/* ── Background grid ── */}
-      <div className="dashboard-grid-bg" />
-
-      {/* ── Header ── */}
-      <header className="dashboard-header">
-        <div className="dashboard-header-inner">
+    <div className="landing-root">
+      {/* ── Sticky Nav ── */}
+      <nav className="landing-nav">
+        <div className="landing-nav-inner">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-neutral-700 to-neutral-900 flex items-center justify-center shadow-lg shadow-neutral-900/20">
-              <Logo className="text-neutral-200" size={20} />
+            <div className="landing-nav-logo">
+              <Logo className="text-emerald-400" size={18} />
             </div>
-            <div>
-              <h1 className="text-lg sm:text-xl font-bold tracking-tight text-neutral-100">
-                {systemTitle}
-              </h1>
-              <p className="text-xs text-neutral-500">{systemSubtitle}</p>
-            </div>
+            <span className="text-sm font-semibold text-neutral-200 tracking-tight">
+              {systemTitle}
+            </span>
           </div>
-          <div className="hidden sm:flex items-center gap-2 text-xs text-neutral-500">
-            <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-            实时更新
+          <div className="flex items-center gap-2 text-xs text-neutral-500">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+            实时
           </div>
         </div>
-      </header>
+      </nav>
 
-      {/* ── Holdings Banner ── */}
-      {!loadingHoldings && holdings.length > 0 && (
-        <div className="dashboard-holdings">
-          <div className="dashboard-holdings-inner">
-            <div className="flex items-center gap-2 mb-3">
-              <Sparkles className="w-3.5 h-3.5 text-neutral-400" />
-              <span className="text-xs font-semibold text-neutral-400 uppercase tracking-wider">
-                AI 推荐持仓
-              </span>
-            </div>
-            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
-              {holdings.slice(0, 8).map((h) => {
-                const cfg = SENTIMENT_CONFIG[h.sentiment] || SENTIMENT_CONFIG.neutral
-                const Icon = cfg.icon
-                return (
-                  <div key={h.id} className="holding-chip flex-shrink-0" style={{ borderColor: `${cfg.color}30` }}>
-                    <div className="flex items-center gap-1.5">
-                      <span className="text-sm font-bold text-neutral-100">{h.stock_name}</span>
-                      <Icon className="w-3.5 h-3.5" style={{ color: cfg.color }} />
-                    </div>
-                    <p className="text-xs text-neutral-500 mt-0.5 line-clamp-1">{h.reason}</p>
-                  </div>
-                )
-              })}
-            </div>
-          </div>
-        </div>
+      {/* ── Hero ── */}
+      <HeroSection title={systemTitle} subtitle={systemSubtitle} />
+
+      {/* ── Portfolio ── */}
+      {Object.keys(professorIndex).length > 0 && (
+        <PortfolioSection data={professorIndex} />
       )}
 
-      {/* ── Main Grid ── */}
-      <div className="dashboard-main">
-        {/* Left: Latest Updates */}
-        <aside className="updates-panel">
-          <div className="flex items-center gap-2 mb-4">
-            <div className="w-1 h-5 rounded-full bg-neutral-400" />
-            <h2 className="text-sm font-bold text-neutral-200 tracking-wide uppercase">最新动态</h2>
-            <span className="text-xs text-neutral-600 ml-auto">{summaryItems.length} 条</span>
+      {/* ── 市场动态 ── */}
+      <TimelineSection items={summaryItems} loading={loadingSummary} />
+
+      {/* ── AI Assistant ── */}
+      <ResearchAssistant
+        messages={messages}
+        status={status}
+        chatRemaining={chatRemaining}
+        systemSubtitle={systemSubtitle}
+        sendMessage={sendMessage}
+      />
+
+      {/* ── Footer ── */}
+      <footer className="landing-footer">
+        <div className="landing-footer-inner">
+          <div className="flex items-center gap-2">
+            <Logo className="text-neutral-600" size={16} />
+            <span className="text-xs text-neutral-600">{systemTitle}</span>
           </div>
-
-          {loadingSummary ? (
-            <div className="flex items-center justify-center py-12 text-neutral-500">
-              <Loader2 className="w-5 h-5 animate-spin" />
-            </div>
-          ) : (
-            <ScrollTicker items={summaryItems} />
-          )}
-        </aside>
-
-        {/* Right: Phone Chat */}
-        <div className="chat-panel">
-          <PhoneChat
-            messages={messages}
-            status={status}
-            chatRemaining={chatRemaining}
-            systemSubtitle={systemSubtitle}
-            sendMessage={sendMessage}
-          />
+          <span className="text-xs text-neutral-700">AI 驱动</span>
         </div>
-      </div>
+      </footer>
     </div>
   )
 }

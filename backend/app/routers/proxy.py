@@ -10,7 +10,7 @@ from fastapi.responses import Response
 router = APIRouter(prefix="/api/proxy", tags=["proxy"])
 
 # 精确匹配的域名
-ALLOWED_HOSTS = {"images.zsxq.com"}
+ALLOWED_HOSTS = {"images.zsxq.com", "article-images.zsxq.com"}
 
 # 后缀匹配的域名 (pic1.zhimg.com, pic2.zhimg.com 等)
 ALLOWED_SUFFIXES = (".zhimg.com",)
