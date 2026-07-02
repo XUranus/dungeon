@@ -145,8 +145,9 @@ def apply_boost(results: list[dict]) -> list[dict]:
     """对 RRF 结果应用时效性和精华加权
 
     - 精华文章 (is_digest=1): RRF 分数 × 1.5
-    - 30 天内: × 1.3
-    - 90 天内: × 1.1
+    - 7 天内: × 2.0（最新观点优先级最高）
+    - 30 天内: × 1.5
+    - 90 天内: × 1.2
     - like_count > 10: × 1.1
     """
     now = datetime.now(timezone.utc)
@@ -172,10 +173,12 @@ def apply_boost(results: list[dict]) -> list[dict]:
                 if pub_dt.tzinfo is None:
                     pub_dt = pub_dt.replace(tzinfo=timezone.utc)
                 days_old = (now - pub_dt).days
-                if days_old <= 30:
-                    boost *= 1.3
+                if days_old <= 7:
+                    boost *= 2.0
+                elif days_old <= 30:
+                    boost *= 1.5
                 elif days_old <= 90:
-                    boost *= 1.1
+                    boost *= 1.2
             except (ValueError, TypeError):
                 pass
 

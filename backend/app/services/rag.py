@@ -25,6 +25,8 @@ SYSTEM_PROMPT = f'''你是一个财经观点分析助手。你的任务是根据
 5. 支持多轮对话，结合上下文理解用户意图
 6. 优先使用编号靠前的参考资料（相关性更高），但要综合所有片段给出完整答案
 7. 当问题涉及"推荐""列举""有哪些"时，务必汇总所有相关片段中的信息，不要只看前几个
+8. **观点时效性规则（最重要）**：参考资料中每条都有发布日期。当同一话题出现新旧观点矛盾时（如早期推荐某标的、近期又看空或减仓），必须以**最新日期的观点为准**，并在回答中明确标注"最新观点已更新"。严禁引用旧观点作为当前推荐。
+9. **作者归属规则（最重要）**：参考资料中可能包含{settings.author_name or '星主'}和其他人（嘉宾、球友、提问者）的观点。你只能将**"回答者: {settings.author_name or '星主'}"或"回答者: DeepVan"后面的回答内容**归为{settings.author_name or '星主'}的观点。标注了"提问者: XXX"的内容是提问者的言论，**不代表星主的观点**，不要将其当作星主的推荐。如果参考资料中没有星主的明确回答，则说明"星主未对此问题发表明确观点"。
 
 格式要求（严格遵守）：
 - 列表一律使用减号 - 开头，禁止使用星号 * 开头（避免与加粗语法冲突）
@@ -250,6 +252,8 @@ async def rag_query_stream(
     has_native_tools = first_finish_reason == "tool_calls" and tool_calls_map
     text_tool_calls = _parse_text_tool_calls(full_text) if not has_native_tools and tools else []
     has_text_tools = len(text_tool_calls) > 0
+    # 宽松检测：即使正则没匹配，只要文本含 <tool_call> 就视为工具调用意图
+    has_malformed_tools = not has_native_tools and not has_text_tools and bool(_HAS_TOOL_CALL_TAG.search(full_text)) if tools else False
 
     if has_native_tools:
         logger.info(f"Native tool calls: {[tc['name'] for tc in tool_calls_map.values()]}")
@@ -258,6 +262,12 @@ async def rag_query_stream(
         clean_text = _strip_text_tool_calls(full_text)
         if clean_text:
             yield {"type": "text", "data": clean_text}
+    elif has_malformed_tools:
+        # 畸形 <tool_call> — 不返回原始 XML，由 followup 调用兜底
+        clean_text = _strip_text_tool_calls(full_text)
+        if clean_text:
+            yield {"type": "text", "data": clean_text}
+        logger.warning(f"检测到畸形 <tool_call>（正则未匹配），已过滤。raw={full_text[:300]}")
     else:
         if full_text:
             yield {"type": "text", "data": full_text}
@@ -367,3 +377,16 @@ async def rag_query_stream(
 
             async for event in _stream_followup(messages, "text_tools"):
                 yield event
+
+    elif has_malformed_tools:
+        # 畸形工具调用：移除工具说明后让模型重新回答（不带工具），防止再次触发工具调用
+        messages[0] = {
+            "role": "system",
+            "content": messages[0]["content"].replace("\n\n" + TOOL_USAGE_PROMPT, ""),
+        }
+        messages.append({
+            "role": "user",
+            "content": "请基于参考资料直接回答用户的问题，不要调用任何工具。",
+        })
+        async for event in _stream_followup(messages, "malformed_tools_fallback"):
+            yield event
