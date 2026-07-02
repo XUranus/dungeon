@@ -1,5 +1,5 @@
 from datetime import datetime
-from sqlalchemy import String, Integer, Text, DateTime, JSON, ForeignKey, UniqueConstraint, func
+from sqlalchemy import String, Integer, Text, DateTime, JSON, Boolean, ForeignKey, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -19,6 +19,7 @@ class Topic(Base):
     like_count: Mapped[int] = mapped_column(Integer, default=0)
     comment_count: Mapped[int] = mapped_column(Integer, default=0)
     images: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    is_digest: Mapped[bool] = mapped_column(Boolean, default=False)  # 知识星球精华标记
     raw_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     crawled_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     published_at: Mapped[datetime | None] = mapped_column(DateTime)

@@ -7,7 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth import get_current_admin
+from app.auth import verify_api_key
 from app.database import get_db
 from app.models import RecommendedHolding
 from app.services.holdings_generator import generate_holdings
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/holdings",
     tags=["holdings"],
-    dependencies=[Depends(get_current_admin)],
+    dependencies=[Depends(verify_api_key)],
 )
 
 

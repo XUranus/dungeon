@@ -17,15 +17,16 @@ export default function ImageGallery({ images }: ImageGalleryProps) {
         {images.map((img, idx) => {
           const thumbSrc = img.thumbnail?.url || img.url
           const largeSrc = img.large?.url || img.url || thumbSrc || ''
+          const localPath = img.local_path || img.thumbnail?.local_path || img.large?.local_path
           if (!thumbSrc) return null
           return (
             <button
               key={img.image_id ?? idx}
-              onClick={() => setLightboxSrc(proxiedImageUrl(largeSrc))}
+              onClick={() => setLightboxSrc(proxiedImageUrl(largeSrc, localPath))}
               className="block rounded-lg overflow-hidden border border-gray-200/60 dark:border-gray-600/40 hover:border-neutral-400 dark:hover:border-neutral-500 transition-colors cursor-pointer group"
             >
               <img
-                src={proxiedImageUrl(thumbSrc)}
+                src={proxiedImageUrl(thumbSrc, localPath)}
                 alt={`图片 ${idx + 1}`}
                 className="max-h-40 w-auto object-cover group-hover:scale-105 transition-transform duration-200"
               />

@@ -25,6 +25,8 @@ def ui_stream_response(
 
     async def generate():
         started = False
+        text_started = False
+        step_started = False
         tool_id = ""
         full_text = ""
 
@@ -44,23 +46,31 @@ def ui_stream_response(
                     if not started:
                         yield f'data: {{"type":"start","messageId":"{msg_id}"}}\n\n'
                         yield 'data: {"type":"start-step"}\n\n'
-                        yield f'data: {{"type":"text-start","id":"{txt_id}"}}\n\n'
                         started = True
+                        step_started = True
+                    if not text_started:
+                        yield f'data: {{"type":"text-start","id":"{txt_id}"}}\n\n'
+                        text_started = True
                     delta_text = event["data"]
                     full_text += delta_text
                     delta = json.dumps(delta_text, ensure_ascii=False)
                     yield f'data: {{"type":"text-delta","id":"{txt_id}","delta":{delta}}}\n\n'
 
                 elif event_type == "tool_start":
+                    if not started:
+                        yield f'data: {{"type":"start","messageId":"{msg_id}"}}\n\n'
+                        yield 'data: {"type":"start-step"}\n\n'
+                        started = True
+                        step_started = True
                     tool_id = f"call_{uuid.uuid4().hex[:8]}"
                     tool_name = json.dumps(event["name"], ensure_ascii=False)
-                    yield f'data: {{"type":"tool-input-start","toolCallId":"{tool_id}","toolName":{tool_name}}}\n\n'
+                    yield f'data: {{"type":"tool-input-start","toolCallId":"{tool_id}","toolName":{tool_name},"dynamic":true}}\n\n'
 
                 elif event_type == "tool_result":
                     tool_name = json.dumps(event["name"], ensure_ascii=False)
                     tool_output = json.dumps(event["data"], ensure_ascii=False)
-                    yield f'data: {{"type":"tool-input-available","toolCallId":"{tool_id}","toolName":{tool_name},"input":{{}}}}\n\n'
-                    yield f'data: {{"type":"tool-output-available","toolCallId":"{tool_id}","output":{tool_output}}}\n\n'
+                    yield f'data: {{"type":"tool-input-available","toolCallId":"{tool_id}","toolName":{tool_name},"input":{{}},"dynamic":true}}\n\n'
+                    yield f'data: {{"type":"tool-output-available","toolCallId":"{tool_id}","output":{tool_output},"dynamic":true}}\n\n'
 
         except Exception:
             logger.exception("RAG问答流异常")
@@ -68,10 +78,12 @@ def ui_stream_response(
                 yield f'data: {{"type":"start","messageId":"{msg_id}"}}\n\n'
             yield 'data: {"type":"error","errorText":"服务内部错误"}\n\n'
 
-        # 关闭文本块（只有在有文本输出时）
-        if started:
+        # 关闭文本块（只有在有文本输出时才发送 text-end）
+        if text_started:
             yield f'data: {{"type":"text-end","id":"{txt_id}"}}\n\n'
+        if step_started:
             yield 'data: {"type":"finish-step"}\n\n'
+        if started:
             yield 'data: {"type":"finish"}\n\n'
         yield 'data: [DONE]\n\n'
 

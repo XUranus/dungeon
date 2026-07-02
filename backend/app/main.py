@@ -5,26 +5,80 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.database import init_db
+from app.database import init_db, async_session, engine
 from app.config import settings
-from app.routers import chat, topics, sources, proxy, auth, dashboard, holdings, professor_index
+from app.routers import chat, topics, sources, proxy, auth, dashboard, holdings, professor_index, mcp
 from app.routers import settings as settings_router
 from app.utils.scheduler import setup_scheduler, shutdown_scheduler
 
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+def _migrate_config():
+    """迁移旧配置字段到新的统一 api_key"""
+    data = settings.to_dict()
+    changed = False
+
+    # 旧字段 → 新 api_key
+    if "mcp_api_key" in data:
+        if data["mcp_api_key"] and not data.get("api_key"):
+            data["api_key"] = data["mcp_api_key"]
+            logger.info("配置迁移: mcp_api_key → api_key")
+        data.pop("mcp_api_key")
+        changed = True
+
+    for old_key in ("admin_password", "jwt_secret", "jwt_expire_hours"):
+        if old_key in data:
+            data.pop(old_key)
+            changed = True
+
+    if changed:
+        # 直接替换整个 _data，确保旧字段被删除
+        settings._data = data
+        settings.save()
+        logger.info("配置迁移完成")
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger = logging.getLogger(__name__)
 
-    # 安全检查
-    if settings.jwt_secret == "change-me-to-a-random-string":
-        logger.warning("⚠️  jwt_secret 使用默认值，请在 config.json 中设置随机密钥！")
-    if not settings.admin_password:
-        logger.warning("⚠️  admin_password 未配置，管理员登录将不可用")
+    # 配置迁移：旧字段 → 新 api_key
+    _migrate_config()
+
+    if not settings.api_key:
+        logger.warning("⚠️  api_key 未配置，请在 config.json 中设置或通过设置页面生成")
 
     await init_db()
+
+    # 启动时自动迁移：检查并添加缺失的列
+    from sqlalchemy import text
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("ALTER TABLE topics ADD COLUMN is_digest BOOLEAN DEFAULT 0"))
+            logger.info("自动迁移: topics 表添加 is_digest 列")
+    except Exception:
+        pass  # 列已存在，忽略
+
+    # 启动时清理残留的 running/pending 任务（进程重启后这些任务已丢失）
+    from datetime import datetime
+    from app.models import ProfessorIndexParseTask, CrawlTask
+    from sqlalchemy import update
+    async with async_session() as db:
+        now = datetime.now()
+        for model, label in [
+            (ProfessorIndexParseTask, "教授指数解析"),
+            (CrawlTask, "爬取"),
+        ]:
+            result = await db.execute(
+                update(model)
+                .where(model.status.in_(["running", "pending"]))
+                .values(status="error", error_message="进程重启，任务中断", finished_at=now)
+            )
+            if result.rowcount > 0:
+                logger.info("启动清理: %d 条 %s 任务标记为 error", result.rowcount, label)
+        await db.commit()
+
     # 如果使用本地embedding，启动时检测并下载模型
     if settings.embedding_provider == "local":
         from app.services.embedding import ensure_local_model
@@ -66,6 +120,7 @@ app.include_router(holdings.router)
 app.include_router(professor_index.router)
 app.include_router(professor_index.public_router)
 app.include_router(proxy.router)
+app.include_router(mcp.router)
 
 
 @app.get("/api/health")

@@ -50,16 +50,17 @@ function getTopicPreview(t: Topic): React.ReactNode {
   )
 }
 
-function ImageThumbnails({ images }: { images: { image_id?: number; thumbnail?: { url: string }; url?: string }[] }) {
+function ImageThumbnails({ images }: { images: { image_id?: number; thumbnail?: { url: string; local_path?: string }; url?: string; local_path?: string }[] }) {
   return (
     <div className="flex gap-1.5 mt-2">
       {images.slice(0, 3).map((img, i) => {
         const src = img.thumbnail?.url || img.url
+        const localPath = img.local_path || img.thumbnail?.local_path
         if (!src) return null
         return (
           <img
             key={img.image_id ?? i}
-            src={proxiedImageUrl(src)}
+            src={proxiedImageUrl(src, localPath)}
             alt=""
             className="w-12 h-12 object-cover rounded-md border border-gray-200/50 dark:border-gray-600/30"
           />
@@ -147,7 +148,7 @@ function CommentItem({ comment }: { comment: Comment }) {
           {comment.images!.map((img, i) => (
             <img
               key={img.image_id ?? i}
-              src={proxiedImageUrl(img.thumbnail?.url || img.url || '')}
+              src={proxiedImageUrl(img.thumbnail?.url || img.url || '', img.local_path || img.thumbnail?.local_path)}
               alt=""
               className="max-h-24 w-auto rounded-md border border-gray-200/50 dark:border-gray-600/30 cursor-pointer hover:opacity-80 transition-opacity"
             />
@@ -201,32 +202,36 @@ export default function TopicsPage() {
   }
 
   return (
-    <div className="p-6 max-w-7xl">
-      <h1 className="text-2xl font-bold mb-1 text-gray-900 dark:text-gray-100">数据浏览</h1>
-      <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">共 {total} 条数据</p>
-
-      {/* 搜索 & 筛选 */}
-      <div className="flex gap-2 mb-6">
+    <div className="p-6 w-full">
+      {/* 固定顶栏：标题 + 搜索 */}
+      <div className="sticky top-0 z-10 -mx-6 px-6 py-3 bg-white/80 dark:bg-neutral-900/80 backdrop-blur-md border-b border-gray-200/40 dark:border-gray-700/40 mb-4 flex items-center gap-4">
+        <h1 className="text-lg font-bold text-gray-900 dark:text-gray-100 whitespace-nowrap">数据浏览</h1>
+        <span className="text-xs text-gray-400 dark:text-gray-500 whitespace-nowrap">共 {total} 条</span>
         <input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
           placeholder="搜索内容..."
-          className="flex-1 glass-card dark:glass-card-dark rounded-xl px-4 py-2.5 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-600"
+          className="flex-1 min-w-0 glass-card dark:glass-card-dark rounded-lg px-3 py-1.5 text-sm text-gray-800 dark:text-gray-200 placeholder-gray-400 dark:placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-600"
         />
-        <select
-          value={contentType}
-          onChange={(e) => { setContentType(e.target.value); setPage(1) }}
-          className="glass-card dark:glass-card-dark rounded-xl px-3 py-2.5 text-sm text-gray-700 dark:text-gray-300 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-600 appearance-none bg-[length:16px] bg-[right_8px_center] bg-no-repeat pr-8"
-          style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='%236b7280'%3E%3Cpath d='M7 7l3-3 3 3m0 6l-3 3-3-3'/%3E%3C/svg%3E")` }}
-        >
+        <div className="flex items-center gap-0.5 glass-card dark:glass-card-dark rounded-lg p-0.5">
           {contentTypes.map(ct => (
-            <option key={ct.value} value={ct.value}>{ct.label}</option>
+            <button
+              key={ct.value}
+              onClick={() => { setContentType(ct.value); setPage(1) }}
+              className={`px-2.5 py-1 rounded-md text-xs font-medium transition-all whitespace-nowrap ${
+                contentType === ct.value
+                  ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 shadow-sm'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-white/50 dark:hover:bg-white/10'
+              }`}
+            >
+              {ct.label}
+            </button>
           ))}
-        </select>
+        </div>
         <button
           onClick={handleSearch}
-          className="bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 px-5 py-2.5 rounded-xl text-sm hover:bg-neutral-800 dark:hover:bg-neutral-100 transition-all font-medium"
+          className="bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 px-4 py-1.5 rounded-lg text-sm hover:bg-neutral-800 dark:hover:bg-neutral-100 transition-all font-medium whitespace-nowrap"
         >
           搜索
         </button>
@@ -234,7 +239,7 @@ export default function TopicsPage() {
 
       <div className="flex gap-6">
         {/* 主题列表 */}
-        <div className={`space-y-3 min-w-0 ${selectedTopic ? 'flex-1' : 'max-w-3xl'}`}>
+        <div className={`space-y-3 min-w-0 ${selectedTopic ? 'w-1/2' : 'flex-1 max-w-4xl'}`}>
           {loading ? (
             <p className="text-gray-400 dark:text-gray-500">加载中...</p>
           ) : topics.length === 0 ? (
@@ -300,7 +305,7 @@ export default function TopicsPage() {
 
         {/* 详情侧栏 */}
         {selectedTopic && (
-          <div className="w-96 glass-card dark:glass-card-dark rounded-xl p-5 h-fit sticky top-6 max-h-[calc(100vh-3rem)] overflow-y-auto">
+          <div className="w-1/2 glass-card dark:glass-card-dark rounded-xl p-5 h-fit sticky top-16 max-h-[calc(100vh-5rem)] overflow-y-auto flex-shrink-0">
             <div className="flex items-center justify-between mb-4">
               <h3 className="font-semibold text-sm text-gray-800 dark:text-gray-200">
                 主题详情

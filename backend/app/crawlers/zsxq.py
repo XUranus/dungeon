@@ -116,13 +116,47 @@ class ZsxqCrawler(BaseCrawler):
             follower_count=data.get("member_count"),
         )
 
+    async def fetch_digest_ids(self, group_id: str, count: int = 100) -> set[str]:
+        """获取精华文章的 topic_id 集合"""
+        digest_ids: set[str] = set()
+        index = 0
+        while index < count:
+            try:
+                resp = await self._request_with_retry(
+                    "GET",
+                    f"/groups/{group_id}/topics/digests",
+                    params={
+                        "sort": "by_create_time",
+                        "direction": "desc",
+                        "index": index,
+                        "count": min(30, count - index),
+                    },
+                )
+                items = resp.json().get("resp_data", {}).get("topics", [])
+                if not items:
+                    break
+                for item in items:
+                    tid = str(item.get("topic_id", ""))
+                    if tid:
+                        digest_ids.add(tid)
+                index += len(items)
+                logger.debug(f"[zsxq] 精华列表: 累计{len(digest_ids)}条")
+                await self._delay()
+            except Exception as e:
+                logger.error(f"[zsxq] 获取精华列表失败(index={index}): {e}")
+                break
+        logger.info(f"[zsxq] 精华文章获取完成: 共{len(digest_ids)}条")
+        return digest_ids
+
     async def crawl_topics(
-        self, group_id: str, since: datetime | None = None, limit: int = 10000
+        self, group_id: str, since: datetime | None = None, limit: int = 10000,
+        digest_ids: set[str] | None = None,
     ) -> tuple[list[CrawledTopic], list[CrawledComment]]:
         """爬取主题，同时提取内嵌评论。返回 (topics, embedded_comments)"""
         logger.info(f"[zsxq] 开始爬取主题: group_id={group_id}, limit={limit}, since={since}")
         topics: list[CrawledTopic] = []
         embedded_comments: list[CrawledComment] = []
+        _digest_ids = digest_ids or set()
         end_time: str | None = None
         page_num = 0
         consecutive_empty = 0
@@ -162,23 +196,35 @@ class ZsxqCrawler(BaseCrawler):
                     return topics, embedded_comments
 
                 topic_type = item.get("type", "unknown")
-                content, images, title = _extract_topic_content(item)
+                content, images, title, article_id = _extract_topic_content(item)
 
                 if not content and not title:
                     skipped += 1
                     logger.debug(f"[zsxq] 跳过空主题: topic_id={item.get('topic_id')}, type={topic_type}")
                     continue
 
+                # talk 中嵌套了文章引用 → 获取完整文章内容（保持 talk 类型，避免污染专栏文章增量边界）
+                topic_url = f"https://wx.zsxq.com/topic/{item['topic_id']}"
+                if article_id:
+                    html_content, html_images = await self._fetch_article_html(article_id)
+                    if html_content:
+                        content = html_content
+                    if html_images:
+                        images = [{"url": url} for url in html_images]
+                    topic_url = f"https://articles.zsxq.com/id_{article_id}.html"
+                    logger.debug(f"[zsxq] 从 talk 中提取嵌套文章: article_id={article_id}")
+
                 topics.append(CrawledTopic(
                     platform_topic_id=str(item["topic_id"]),
                     title=title,
                     content=content,
                     content_type=topic_type,
-                    url=f"https://wx.zsxq.com/topic/{item['topic_id']}",
+                    url=topic_url,
                     like_count=item.get("likes_count", 0),
                     comment_count=item.get("comments_count", item.get("show_comments_count", 0)),
                     published_at=pub_dt,
                     images=images,
+                    is_digest=str(item["topic_id"]) in _digest_ids,
                     raw_json=item,
                 ))
 
@@ -253,32 +299,74 @@ class ZsxqCrawler(BaseCrawler):
             return []
 
     async def crawl_column_articles(
-        self, group_id: str, column_id: int, limit: int = 100
+        self, group_id: str, column_id: int, limit: int = 1000,
+        since: datetime | None = None,
     ) -> list[CrawledTopic]:
-        """抓取专栏下的文章，返回 CrawledTopic 列表（content_type='article'）"""
-        logger.info("[zsxq] 开始抓取专栏文章: column_id=%d, limit=%d", column_id, limit)
+        """抓取专栏下的文章（支持分页 + 增量），返回 CrawledTopic 列表"""
+        logger.info("[zsxq] 开始抓取专栏文章: column_id=%d, limit=%d, since=%s", column_id, limit, since)
 
-        # Step 1: 列出专栏中的文章
-        try:
-            resp = await self._request_with_retry(
-                "GET",
-                f"/groups/{group_id}/columns/{column_id}/topics",
-                params={"count": min(limit, 100)},
-            )
-            items = resp.json().get("resp_data", {}).get("topics", [])
-        except Exception as e:
-            logger.error("[zsxq] 专栏文章列表获取失败: column_id=%d, %s", column_id, e)
-            return []
+        # Step 1: 分页列出专栏中的文章
+        all_items: list[dict] = []
+        end_time: str | None = None
+        page_num = 0
+        consecutive_empty = 0
 
-        if not items:
+        while len(all_items) < limit:
+            page_num += 1
+            params: dict = {"count": min(limit - len(all_items), 100)}
+            if end_time:
+                params["end_time"] = end_time
+
+            try:
+                resp = await self._request_with_retry(
+                    "GET",
+                    f"/groups/{group_id}/columns/{column_id}/topics",
+                    params=params,
+                )
+                items = resp.json().get("resp_data", {}).get("topics", [])
+            except Exception as e:
+                logger.error("[zsxq] 专栏文章列表第%d页请求失败: column_id=%d, %s", page_num, column_id, e)
+                break
+
+            if not items:
+                consecutive_empty += 1
+                if consecutive_empty >= MAX_EMPTY_PAGES:
+                    logger.info("[zsxq] 专栏 column_id=%d 连续%d页为空, 判定翻完, 共%d篇",
+                                column_id, MAX_EMPTY_PAGES, len(all_items))
+                    break
+                logger.warning("[zsxq] 专栏 column_id=%d 第%d页为空 (连续空页 %d/%d), 等待后重试",
+                               column_id, page_num, consecutive_empty, MAX_EMPTY_PAGES)
+                await asyncio.sleep(RETRY_BACKOFF_BASE)
+                continue
+
+            consecutive_empty = 0
+
+            # 增量检查：遇到早于 since 的文章就停止
+            reached_since = False
+            for item in items:
+                create_time = item.get("create_time", "")
+                pub_dt = _parse_zsxq_time(create_time)
+                if since and pub_dt and pub_dt < since:
+                    logger.info("[zsxq] 专栏 column_id=%d 到达增量边界(%s), 已收集%d篇",
+                                column_id, since, len(all_items))
+                    reached_since = True
+                    break
+                all_items.append(item)
+
+            end_time = items[-1].get("create_time")
+            logger.info("[zsxq] 专栏 column_id=%d 第%d页完成, 累计%d篇", column_id, page_num, len(all_items))
+
+            if reached_since:
+                break
+            await self._delay()
+
+        if not all_items:
             logger.info("[zsxq] 专栏 column_id=%d 无文章", column_id)
             return []
 
-        logger.info("[zsxq] 专栏 column_id=%d 返回 %d 篇文章", column_id, len(items))
-
         # Step 2: 对每篇文章获取详情 + HTML 内容
         articles: list[CrawledTopic] = []
-        for item in items:
+        for item in all_items:
             topic_id = item.get("topic_id")
             if not topic_id:
                 continue
@@ -290,7 +378,7 @@ class ZsxqCrawler(BaseCrawler):
             except Exception as e:
                 logger.warning("[zsxq] 文章获取失败: topic_id=%s, %s", topic_id, e)
 
-        logger.info("[zsxq] 专栏文章抓取完成: %d/%d 篇", len(articles), len(items))
+        logger.info("[zsxq] 专栏 column_id=%d 文章抓取完成: %d/%d 篇", column_id, len(articles), len(all_items))
         return articles
 
     async def _fetch_article_detail(
@@ -317,8 +405,7 @@ class ZsxqCrawler(BaseCrawler):
         article_url = article_info.get("article_url", "")
 
         # 提取文本和图片
-        content_text, images = _extract_topic_content(topic_data)[:2] if False else ("", [])
-        content_text, images, _ = _extract_topic_content(topic_data)
+        content_text, images, _, _ = _extract_topic_content(topic_data)
 
         # 如果有 article_id，从 HTML 获取更完整的内容（含图片）
         if article_id:
@@ -494,12 +581,14 @@ def _extract_images(obj: dict) -> list[dict]:
     return result
 
 
-def _extract_topic_content(item: dict) -> tuple[str, list[dict], str | None]:
-    """从主题 item 中提取 (content, images, title)。按 type 分支处理。"""
+def _extract_topic_content(item: dict) -> tuple[str, list[dict], str | None, str | None]:
+    """从主题 item 中提取 (content, images, title, article_id)。按 type 分支处理。
+    article_id: 如果 talk 中嵌套了文章引用，返回 article_id 供调用方获取完整文章内容。"""
     topic_type = item.get("type", "unknown")
     title = item.get("title")
     images: list[dict] = []
     parts: list[str] = []
+    article_id: str | None = None
 
     if topic_type == "q&a":
         question = item.get("question", {})
@@ -528,6 +617,12 @@ def _extract_topic_content(item: dict) -> tuple[str, list[dict], str | None]:
         images.extend(_extract_images(talk))
         if not title:
             title = talk.get("title")
+        # talk 中可能嵌套文章引用（非专栏文章）
+        talk_article = talk.get("article", {})
+        if isinstance(talk_article, dict) and talk_article.get("article_id"):
+            article_id = talk_article["article_id"]
+            if not title:
+                title = talk_article.get("title")
 
     elif topic_type == "article":
         article = item.get("article", {})
@@ -551,7 +646,7 @@ def _extract_topic_content(item: dict) -> tuple[str, list[dict], str | None]:
     content = "\n\n".join(parts)
     # 将 zsxq 自定义 XML 标签转换为标准 HTML
     content = zsxq_xml_to_html(content)
-    return content, images, title
+    return content, images, title, article_id
 
 
 def _parse_comment(item: dict) -> CrawledComment:

@@ -16,38 +16,40 @@ logger = logging.getLogger(__name__)
 # ── 关键词列表（教授指数 / 叫兽指数） ──
 _KEYWORDS = ["教授指数", "叫兽指数"]
 
-PARSE_PROMPT = """你是教授指数的持仓解析助手。以下是星主 DeepVan 在知识星球中关于"叫兽指数"（也称"教授指数"）的历史文章和发言记录。
-其中 [文章] 标记的是专栏正式文章（最权威的数据源），[Q&A] 是问答互动。
-部分条目附带了 [图片描述]，可能包含持仓明细表、调仓记录截图等关键信息。
-
-请综合所有信息，提取叫兽指数的**最新**持仓配置，分"内地版"和"全球版"两个版本。
+PARSE_PROMPT = """你是教授指数的持仓解析助手。以下是星主 DeepVan 在知识星球中关于"叫兽指数"的历史文章和发言，按时间倒序排列。
+最新排在最前，请优先采用最新数据。
 
 {topics_text}
 
-请以 JSON 格式返回，格式为：
+请提取叫兽指数的**最新**持仓配置，分"内地版"和"全球版"两个版本。
+
+返回 JSON 格式：
 {{
   "china": {{
     "holdings": [
-      {{"name": "标的名称", "code": "代码或null", "market": "A股/港股/基金", "weight": 百分比数字或null}}
+      {{"name": "标的名称", "code": "代码或null", "market": "A股/港股/基金", "weight": 权重百分比数字}}
     ],
-    "notes": "最近调仓说明（一两句话，包括净值等关键数据）"
+    "notes": "最新调仓说明（一两句话）",
+    "source_ids": [实际引用的文章编号，如 [1, 3]]
   }},
   "global": {{
     "holdings": [
-      {{"name": "标的名称", "code": "代码或null", "market": "美股/日股/港股", "weight": 百分比数字或null}}
+      {{"name": "标的名称", "code": "代码或null", "market": "美股/日股/港股", "weight": 权重百分比数字}}
     ],
-    "notes": "最近调仓说明（一两句话，包括净值等关键数据）"
+    "notes": "最新调仓说明（一两句话）",
+    "source_ids": [实际引用的文章编号]
   }}
 }}
 
 规则：
-1. 以最新的文章/发言为准。如果新文章说"调仓"，则以新的持仓列表覆盖旧的
-2. 权重百分比：从图片持仓表或文中提取；如果没有明确百分比则为 null
-3. 标的代码尽量补充（A股6位数字如000001，港股如03441.HK，美股直接ticker如SPY/AMD）
-4. market 字段只能是: A股 / 美股 / 港股 / 日股 / 基金
-5. 如果某个版本找不到任何信息，holdings 返回空数组
-6. 从图片描述中识别的持仓表格也要纳入，注意区分内地版和全球版
-7. 只返回 JSON，不要有其他文字"""
+1. 只提取**最新一期**的持仓，忽略旧的调仓记录
+2. **必须提取权重百分比**：从图片持仓表、文中比例、等权分配（如10只标的则每只10%）中获取，不要返回 null
+3. source_ids 只填你实际参考的条目编号（方括号中的数字），不要超过5个
+4. 标的代码尽量补充（A股6位数字如000001，港股如03441.HK，美股如SPY）
+5. market 字段只能是: A股 / 美股 / 港股 / 日股 / 基金
+6. 从图片描述中识别的持仓表格也要纳入
+7. 如果某个版本完全没有数据，holdings 返回空数组
+8. 只返回 JSON，不要有其他文字"""
 
 
 def _extract_image_urls(topic: Topic) -> list[str]:
@@ -116,13 +118,13 @@ async def _describe_images(image_urls: list[str]) -> list[str]:
 
 
 async def find_professor_index_topics() -> list[Topic]:
-    """查找所有教授指数相关 Topic（关键词匹配 + 专栏文章），按时间倒序。
-    优先返回专栏文章（权威数据源），再补充关键词匹配的 Q&A。"""
+    """查找所有教授指数相关 Topic（关键词匹配 + 专栏文章），统一按时间倒序。
+    最新内容排在最前，确保 LLM 优先看到最新调仓信息。"""
     keyword_conditions = [Topic.title.contains(kw) for kw in _KEYWORDS]
     keyword_conditions += [Topic.content.contains(kw) for kw in _KEYWORDS]
 
     async with async_session() as db:
-        # 1. zsxq 专栏文章（权威数据源，优先级最高）
+        # 1. zsxq 专栏文章（权威数据源）
         article_result = await db.execute(
             select(Topic)
             .where(Topic.platform == "zsxq", Topic.content_type == "article")
@@ -132,17 +134,19 @@ async def find_professor_index_topics() -> list[Topic]:
         articles = list(article_result.scalars().all())
         seen_ids = {t.id for t in articles}
 
-        # 2. 关键词匹配的 Q&A/talk（补充上下文）
+        # 2. 关键词匹配的 talk/Q&A（补充最新调仓上下文）
         keyword_result = await db.execute(
             select(Topic)
             .where(or_(*keyword_conditions))
             .order_by(desc(Topic.published_at))
-            .limit(50)
+            .limit(80)
         )
         extras = [t for t in keyword_result.scalars().all() if t.id not in seen_ids]
 
-        # 文章在前，Q&A 在后（LLM 优先看到最新文章）
-        return articles + extras
+        # 合并后统一按时间倒序，LLM 优先看到最新调仓信息
+        all_topics = articles + extras
+        all_topics.sort(key=lambda t: t.published_at or datetime.min, reverse=True)
+        return all_topics
 
 
 async def parse_professor_index(topics: list[Topic]) -> dict:
@@ -226,16 +230,16 @@ async def parse_professor_index(topics: list[Topic]) -> dict:
 
     try:
         parsed = json.loads(raw_text)
-        china = parsed.get("china", parsed.get("内地版", {"holdings": [], "notes": ""}))
-        glob = parsed.get("global", parsed.get("全球版", {"holdings": [], "notes": ""}))
+        china = parsed.get("china", parsed.get("内地版", {"holdings": [], "notes": "", "source_ids": []}))
+        glob = parsed.get("global", parsed.get("全球版", {"holdings": [], "notes": "", "source_ids": []}))
         if isinstance(china, list):
-            china = {"holdings": china, "notes": ""}
+            china = {"holdings": china, "notes": "", "source_ids": []}
         if isinstance(glob, list):
-            glob = {"holdings": glob, "notes": ""}
+            glob = {"holdings": glob, "notes": "", "source_ids": []}
         return {"china": china, "global": glob}
     except json.JSONDecodeError:
         logger.warning("教授指数 JSON 解析失败: %s", raw_text[:300])
-        return {"china": {"holdings": [], "notes": ""}, "global": {"holdings": [], "notes": ""}}
+        return {"china": {"holdings": [], "notes": "", "source_ids": []}, "global": {"holdings": [], "notes": "", "source_ids": []}}
 
 
 async def update_professor_index() -> dict:
@@ -245,7 +249,9 @@ async def update_professor_index() -> dict:
         logger.info("未找到教授指数相关文章")
         return {"china": [], "global": [], "message": "未找到教授指数相关文章"}
 
-    logger.info("找到 %d 篇教授指数相关文章，开始解析...", len(topics))
+    # 只取最新 15 篇，减少噪声和 token 消耗
+    topics = topics[:15]
+    logger.info("使用最新 %d 篇教授指数相关文章，开始解析...", len(topics))
     source_ids = [t.id for t in topics]
     result = await parse_professor_index(topics)
 
@@ -261,9 +267,19 @@ async def update_professor_index() -> dict:
                 logger.info("教授指数 %s: 无持仓数据", version_label)
                 continue
 
+            # LLM 返回的 source_ids 是 1-based 索引，转为实际 topic ID
+            llm_source_ids = data.get("source_ids", [])
+            actual_source_ids = []
+            for idx in llm_source_ids:
+                if isinstance(idx, int) and 1 <= idx <= len(topics):
+                    actual_source_ids.append(topics[idx - 1].id)
+            # fallback: 如果 LLM 没返回 source_ids，用全部
+            if not actual_source_ids:
+                actual_source_ids = source_ids
+
             snapshot = ProfessorIndexSnapshot(
                 version=version_label,
-                source_topic_ids=source_ids,
+                source_topic_ids=actual_source_ids,
                 holdings=holdings,
                 notes=notes,
             )
@@ -310,6 +326,17 @@ async def get_latest_snapshots() -> dict:
                     .order_by(ProfessorIndexHolding.id)
                 )
                 holdings = holdings_result.scalars().all()
+
+                # 查询参考文章
+                source_ids = snap.source_topic_ids or []
+                if source_ids:
+                    src_result = await db.execute(
+                        select(Topic).where(Topic.id.in_(source_ids))
+                    )
+                    source_topics = src_result.scalars().all()
+                else:
+                    source_topics = []
+
                 result[version_label] = {
                     "snapshot_id": snap.id,
                     "snapshot_at": snap.snapshot_at.isoformat() if snap.snapshot_at else None,
@@ -322,6 +349,16 @@ async def get_latest_snapshots() -> dict:
                             "weight": h.weight,
                         }
                         for h in holdings
+                    ],
+                    "source_articles": [
+                        {
+                            "id": t.id,
+                            "title": t.title,
+                            "url": t.url,
+                            "published_at": t.published_at.isoformat() if t.published_at else None,
+                            "content_type": t.content_type,
+                        }
+                        for t in source_topics
                     ],
                 }
             else:

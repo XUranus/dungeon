@@ -2,6 +2,7 @@
 
 import logging
 import re
+from datetime import datetime, timezone
 from rank_bm25 import BM25Okapi
 
 from app.services.vectorstore import get_all_documents
@@ -138,3 +139,53 @@ def add_to_bm25_index(ids: list[str], documents: list[str], metadatas: list[dict
     if _bm25_docs:
         tokenized = [_tokenize(doc) for doc in _bm25_docs]
         _bm25_index = BM25Okapi(tokenized)
+
+
+def apply_boost(results: list[dict]) -> list[dict]:
+    """对 RRF 结果应用时效性和精华加权
+
+    - 精华文章 (is_digest=1): RRF 分数 × 1.5
+    - 30 天内: × 1.3
+    - 90 天内: × 1.1
+    - like_count > 10: × 1.1
+    """
+    now = datetime.now(timezone.utc)
+
+    # 如果没有 rrf_score（dense-only 模式），根据排名位置初始化分数
+    for i, item in enumerate(results):
+        if "rrf_score" not in item:
+            item["rrf_score"] = 1.0 / (i + 1)
+
+    for item in results:
+        meta = item.get("metadata", {})
+        boost = 1.0
+
+        # 精华加权
+        if meta.get("is_digest"):
+            boost *= 1.5
+
+        # 时效性加权
+        pub_str = meta.get("published_at", "")
+        if pub_str:
+            try:
+                pub_dt = datetime.fromisoformat(pub_str)
+                if pub_dt.tzinfo is None:
+                    pub_dt = pub_dt.replace(tzinfo=timezone.utc)
+                days_old = (now - pub_dt).days
+                if days_old <= 30:
+                    boost *= 1.3
+                elif days_old <= 90:
+                    boost *= 1.1
+            except (ValueError, TypeError):
+                pass
+
+        # 热度加权
+        likes = meta.get("like_count", 0)
+        if likes and int(likes) > 10:
+            boost *= 1.1
+
+        item["rrf_score"] = item.get("rrf_score", 0) * boost
+
+    # 重新排序
+    results.sort(key=lambda x: x.get("rrf_score", 0), reverse=True)
+    return results

@@ -1,10 +1,10 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Lock, Loader2 } from 'lucide-react'
+import { Key, Loader2 } from 'lucide-react'
 import { useAuth } from '../contexts/AuthContext'
 
 export default function LoginPage() {
-  const [password, setPassword] = useState('')
+  const [apiKey, setApiKey] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const { login } = useAuth()
@@ -12,15 +12,15 @@ export default function LoginPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!password.trim()) return
+    if (!apiKey.trim()) return
 
     setLoading(true)
     setError('')
     try {
-      await login(password)
+      await login(apiKey.trim())
       navigate('/admin/crawl')
     } catch (err) {
-      setError(err instanceof Error ? err.message : '登录失败')
+      setError(err instanceof Error ? err.message : '验证失败')
     } finally {
       setLoading(false)
     }
@@ -31,18 +31,18 @@ export default function LoginPage() {
       <div className="glass dark:glass-dark rounded-2xl p-8 w-full max-w-sm">
         <div className="text-center mb-6">
           <div className="inline-flex items-center justify-center w-12 h-12 rounded-full bg-neutral-900 dark:bg-white mb-3">
-            <Lock className="w-5 h-5 text-white dark:text-neutral-900" />
+            <Key className="w-5 h-5 text-white dark:text-neutral-900" />
           </div>
-          <h1 className="text-xl font-bold text-neutral-900 dark:text-neutral-100">管理员登录</h1>
-          <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">输入密码进入后台管理</p>
+          <h1 className="text-xl font-bold text-neutral-900 dark:text-neutral-100">管理后台</h1>
+          <p className="text-sm text-neutral-500 dark:text-neutral-400 mt-1">输入 API Key 进入后台管理</p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <input
             type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            placeholder="请输入管理员密码"
+            value={apiKey}
+            onChange={(e) => setApiKey(e.target.value)}
+            placeholder="请输入 API Key"
             className="w-full bg-neutral-100 dark:bg-neutral-800 rounded-xl px-4 py-3 text-sm text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-600 border border-neutral-200 dark:border-neutral-700"
             autoFocus
             disabled={loading}
@@ -54,13 +54,13 @@ export default function LoginPage() {
 
           <button
             type="submit"
-            disabled={loading || !password.trim()}
+            disabled={loading || !apiKey.trim()}
             className="w-full bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-xl py-3 text-sm font-medium hover:bg-neutral-800 dark:hover:bg-neutral-100 disabled:opacity-50 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
           >
             {loading ? (
               <Loader2 className="w-4 h-4 animate-spin" />
             ) : (
-              '登 录'
+              '验 证'
             )}
           </button>
         </form>

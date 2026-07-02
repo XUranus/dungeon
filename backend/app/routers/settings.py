@@ -5,14 +5,14 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from app.auth import get_current_admin
+from app.auth import verify_api_key
 from app.config import settings
 from app.utils.scheduler import apply_crawl_interval, get_scheduler_status
 
 router = APIRouter(
     prefix="/api/settings",
     tags=["settings"],
-    dependencies=[Depends(get_current_admin)],
+    dependencies=[Depends(verify_api_key)],
 )
 
 # 公开路由（无需登录）

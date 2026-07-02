@@ -1,4 +1,4 @@
-"""管理员登录 API"""
+"""API Key 管理"""
 
 import hmac
 import time
@@ -8,54 +8,79 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 from app.config import settings
-from app.auth import create_token, get_current_admin, Depends
+from app.auth import verify_api_key, generate_api_key, Depends
 
 router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 
-class LoginRequest(BaseModel):
-    password: str
-
-
-class LoginResponse(BaseModel):
-    token: str
-
-
 # ── 简易速率限制 ──
-_LOGIN_ATTEMPTS: dict[str, list[float]] = defaultdict(list)
-_MAX_ATTEMPTS = 5       # 窗口内最大尝试次数
-_WINDOW_SECONDS = 300   # 5 分钟窗口
+_VERIFY_ATTEMPTS: dict[str, list[float]] = defaultdict(list)
+_MAX_ATTEMPTS = 10
+_WINDOW_SECONDS = 300
 
 
 def _check_rate_limit(ip: str):
-    """检查 IP 是否超过登录速率限制"""
     now = time.monotonic()
-    attempts = _LOGIN_ATTEMPTS[ip]
-    # 清除窗口外的记录
-    _LOGIN_ATTEMPTS[ip] = [t for t in attempts if now - t < _WINDOW_SECONDS]
-    if len(_LOGIN_ATTEMPTS[ip]) >= _MAX_ATTEMPTS:
+    _VERIFY_ATTEMPTS[ip] = [t for t in _VERIFY_ATTEMPTS[ip] if now - t < _WINDOW_SECONDS]
+    if len(_VERIFY_ATTEMPTS[ip]) >= _MAX_ATTEMPTS:
         raise HTTPException(
             status_code=429,
-            detail=f"登录尝试过于频繁，请 {_WINDOW_SECONDS // 60} 分钟后再试",
+            detail=f"尝试过于频繁，请 {_WINDOW_SECONDS // 60} 分钟后再试",
         )
-    _LOGIN_ATTEMPTS[ip].append(now)
+    _VERIFY_ATTEMPTS[ip].append(now)
 
 
-@router.post("/login", response_model=LoginResponse)
-async def login(req: LoginRequest, request: Request):
-    """管理员登录"""
+# ── Schemas ──
+
+class VerifyRequest(BaseModel):
+    api_key: str
+
+
+class VerifyResponse(BaseModel):
+    ok: bool
+
+
+class KeyInfoResponse(BaseModel):
+    api_key_set: bool
+    api_key_preview: str
+
+
+class KeyRefreshResponse(BaseModel):
+    api_key: str
+    api_key_preview: str
+
+
+# ── Endpoints ──
+
+@router.post("/verify", response_model=VerifyResponse)
+async def verify(req: VerifyRequest, request: Request):
+    """验证 API Key 是否正确（用于前端登录）"""
     ip = request.client.host if request.client else "unknown"
     _check_rate_limit(ip)
 
-    if not settings.admin_password:
-        raise HTTPException(status_code=500, detail="管理员密码未配置")
-    # 使用常量时间比较防止时序攻击
-    if not hmac.compare_digest(req.password, settings.admin_password):
-        raise HTTPException(status_code=401, detail="密码错误")
-    return LoginResponse(token=create_token())
+    expected = settings.api_key
+    if not expected:
+        raise HTTPException(status_code=500, detail="API Key 未配置")
+    if not hmac.compare_digest(req.api_key, expected):
+        raise HTTPException(status_code=401, detail="API Key 错误")
+    return VerifyResponse(ok=True)
 
 
-@router.get("/check")
-async def check(admin: str = Depends(get_current_admin)):
-    """验证 token 是否有效"""
-    return {"ok": True}
+@router.get("/key", response_model=KeyInfoResponse)
+async def read_key(admin: str = Depends(verify_api_key)):
+    """获取当前 API Key（脱敏显示）"""
+    key = settings.api_key or ""
+    if key and len(key) > 16:
+        preview = key[:8] + "..." + key[-8:]
+    else:
+        preview = "(未设置)" if not key else key
+    return KeyInfoResponse(api_key_set=bool(key), api_key_preview=preview)
+
+
+@router.put("/key/refresh", response_model=KeyRefreshResponse)
+async def refresh_key(admin: str = Depends(verify_api_key)):
+    """刷新 API Key（生成新 key，旧 key 立即失效）"""
+    new_key = generate_api_key()
+    settings.update({"api_key": new_key})
+    preview = new_key[:8] + "..." + new_key[-8:]
+    return KeyRefreshResponse(api_key=new_key, api_key_preview=preview)

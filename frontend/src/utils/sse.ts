@@ -22,7 +22,7 @@ export function connectSSE(
     while (!disposed) {
       try {
         const headers: Record<string, string> = { Accept: 'text/event-stream' }
-        const token = localStorage.getItem('admin_token')
+        const token = localStorage.getItem('api_key')
         if (token) headers['Authorization'] = `Bearer ${token}`
 
         const resp = await fetch(url, { headers, signal: abortSignal })

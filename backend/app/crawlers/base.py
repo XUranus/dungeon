@@ -14,6 +14,7 @@ class CrawledTopic:
     comment_count: int
     published_at: datetime | None
     images: list[dict] = field(default_factory=list)
+    is_digest: bool = False
     raw_json: dict | None = None
 
 

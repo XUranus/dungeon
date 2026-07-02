@@ -10,12 +10,12 @@ from app.database import get_db, async_session as async_session_factory
 from app.models import CrawlTask
 from app.services.ingestion import ingest_platform, ingest_all, get_enabled_platforms
 from app.services import task_manager
-from app.auth import get_current_admin
+from app.auth import verify_api_key
 
 router = APIRouter(
     prefix="/api/sources",
     tags=["sources"],
-    dependencies=[Depends(get_current_admin)],
+    dependencies=[Depends(verify_api_key)],
 )
 
 

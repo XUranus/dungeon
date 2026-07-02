@@ -3,7 +3,8 @@ import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
 import {
   Loader2, Send, ArrowUpRight, Heart, MessageSquare,
-  TrendingUp, Globe, Sparkles, ChevronRight,
+  TrendingUp, Globe, Sparkles, ChevronRight, BookOpen,
+  Wrench, Check, Search, BarChart3, Globe2, Calendar,
 } from 'lucide-react'
 import Logo from '../components/Logo'
 import { MarkdownMessage } from '../components/chat/MarkdownMessage'
@@ -17,6 +18,7 @@ import {
   type DashboardSummaryItem,
   type ProfessorIndexData,
   type ProfessorIndexVersion,
+  type ProfessorIndexSourceArticle,
 } from '../services/api'
 import { getVisitorId } from '../utils/visitor'
 
@@ -82,6 +84,56 @@ function HeroSection({ title, subtitle }: { title: string; subtitle: string }) {
   )
 }
 
+/* ── Source Articles (参考文章) ── */
+function SourceArticles({ articles }: { articles: ProfessorIndexSourceArticle[] }) {
+  const [expanded, setExpanded] = useState(false)
+
+  return (
+    <div className="mt-2">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
+      >
+        <BookOpen className="w-3 h-3" />
+        <span>参考文章 ({articles.length})</span>
+        <ChevronRight
+          className={`w-3 h-3 transition-transform ${expanded ? 'rotate-90' : ''}`}
+        />
+      </button>
+      {expanded && (
+        <div className="mt-1.5 space-y-1">
+          {articles.map((a) => (
+            <div key={a.id} className="flex items-center gap-2 text-xs">
+              <span className="text-[10px] px-1 py-0.5 rounded bg-white/5 text-neutral-500 flex-shrink-0">
+                {a.content_type === 'article' ? '文章' : 'Q&A'}
+              </span>
+              {a.url ? (
+                <a
+                  href={a.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-neutral-400 hover:text-emerald-400 transition-colors truncate"
+                >
+                  {a.title || `文章 #${a.id}`}
+                </a>
+              ) : (
+                <span className="text-neutral-500 truncate">
+                  {a.title || `文章 #${a.id}`}
+                </span>
+              )}
+              {a.published_at && (
+                <span className="text-neutral-600 flex-shrink-0 ml-auto">
+                  {new Date(a.published_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ── Portfolio Section (Professor Index) ── */
 function PortfolioSection({ data }: { data: ProfessorIndexData }) {
   const versions = ['内地版', '全球版'].filter(v => data[v])
@@ -123,6 +175,10 @@ function PortfolioSection({ data }: { data: ProfessorIndexData }) {
 
               {snap.notes && (
                 <p className="landing-portfolio-notes">{snap.notes}</p>
+              )}
+
+              {snap.source_articles && snap.source_articles.length > 0 && (
+                <SourceArticles articles={snap.source_articles} />
               )}
 
               {hasWeights ? (
@@ -263,6 +319,68 @@ function TimelineSection({ items, loading }: { items: DashboardSummaryItem[]; lo
   )
 }
 
+/* ── 工具调用卡片 ── */
+const TOOL_META: Record<string, { label: string; icon: typeof Search; color: string }> = {
+  search_knowledge: { label: '搜索知识库', icon: Search, color: 'text-emerald-400' },
+  web_search: { label: '联网搜索', icon: Globe2, color: 'text-blue-400' },
+  get_stock_quote: { label: '查询行情', icon: BarChart3, color: 'text-amber-400' },
+  get_market_overview: { label: '市场概况', icon: BarChart3, color: 'text-amber-400' },
+  get_current_date: { label: '确认日期', icon: Calendar, color: 'text-neutral-400' },
+}
+
+function isToolPart(p: Record<string, unknown>): boolean {
+  const t = String(p.type || '')
+  return t === 'dynamic-tool' || t.startsWith('tool-')
+}
+
+function ToolCallCard({ part }: { part: Record<string, unknown> }) {
+  const [expanded, setExpanded] = useState(false)
+  const toolName = String(part.toolName || '')
+  const meta = TOOL_META[toolName] || { label: toolName, icon: Wrench, color: 'text-neutral-400' }
+  const Icon = meta.icon
+  const state = String(part.state || '')
+  const isRunning = state === 'input-streaming' || state === 'input-available'
+  const isDone = state === 'output-available'
+  const result = isDone ? String(part.output || '') : ''
+
+  // 截取结果预览（第一行或前60字符）
+  const preview = result.split('\n')[0].slice(0, 80)
+  const showExpand = result.length > 80
+
+  return (
+    <div className="my-1.5">
+      <button
+        onClick={() => showExpand && setExpanded(!expanded)}
+        className={`flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs transition-all w-full text-left ${
+          isRunning
+            ? 'bg-neutral-800/50 text-neutral-300'
+            : 'bg-neutral-800/30 text-neutral-500 hover:bg-neutral-800/50'
+        }`}
+      >
+        {isRunning ? (
+          <Loader2 className={`w-3 h-3 animate-spin ${meta.color}`} />
+        ) : (
+          <Check className="w-3 h-3 text-emerald-400" />
+        )}
+        <Icon className={`w-3 h-3 ${meta.color}`} />
+        <span className="font-medium">{meta.label}</span>
+        {isRunning && <span className="text-neutral-500 animate-pulse ml-1">执行中...</span>}
+        {isDone && !expanded && (
+          <span className="text-neutral-600 truncate ml-1 flex-1">{preview}</span>
+        )}
+        {showExpand && (
+          <ChevronRight className={`w-3 h-3 ml-auto flex-shrink-0 transition-transform ${expanded ? 'rotate-90' : ''}`} />
+        )}
+      </button>
+      {expanded && isDone && (
+        <div className="mt-1 ml-5 px-3 py-2 rounded-lg bg-neutral-900/60 border border-neutral-800/50 text-xs text-neutral-400 whitespace-pre-wrap max-h-48 overflow-y-auto">
+          {result.slice(0, 1500)}{result.length > 1500 ? '...' : ''}
+        </div>
+      )}
+    </div>
+  )
+}
+
 /* ── AI 研究助手 ── */
 function ResearchAssistant({
   messages, status, chatRemaining, systemSubtitle, sendMessage,
@@ -328,49 +446,74 @@ function ResearchAssistant({
             </div>
           )}
 
-          {messages.map((msg) => (
-            <div key={msg.id} className={`landing-chat-msg ${msg.role === 'user' ? 'landing-chat-user' : 'landing-chat-ai'}`}>
-              {msg.parts?.map((part, i) => {
-                if (part.type === 'text') {
-                  return msg.role === 'user' ? (
-                    <div key={i} className="landing-bubble-user">{part.text}</div>
-                  ) : (
-                    <div key={i} className="landing-bubble-ai">
-                      <MarkdownMessage content={part.text} />
-                    </div>
-                  )
-                }
-                if (part.type === 'tool-invocation') {
-                  const ti = (part as Record<string, unknown>).toolInvocation as Record<string, unknown> | undefined
-                  if (!ti) return null
-                  const toolLabels: Record<string, string> = {
-                    web_search: '网络搜索', get_stock_quote: '股票行情', get_market_overview: '市场概况',
-                  }
-                  const toolName = String(ti.toolName || '')
-                  return (
-                    <div key={i} className="landing-tool-card">
-                      {ti.state === 'call' && <Loader2 className="w-3 h-3 animate-spin" />}
-                      <span>{toolLabels[toolName] || toolName}</span>
-                      {ti.state === 'result' && <span className="text-emerald-400">✓</span>}
-                    </div>
-                  )
-                }
-                return null
-              })}
-            </div>
-          ))}
+          {messages.map((msg) => {
+            const isUser = msg.role === 'user'
+            // 分离工具调用和文本
+            const toolParts = msg.parts?.filter(p => isToolPart(p as Record<string, unknown>)) || []
+            const textParts = msg.parts?.filter(p => p.type === 'text') || []
 
-          {isLoading && messages.length > 0 && messages[messages.length - 1]?.role === 'user' && (
-            <div className="landing-chat-msg landing-chat-ai">
-              <div className="landing-bubble-ai flex items-center gap-2">
-                <div className="flex gap-1">
-                  <span className="w-1.5 h-1.5 bg-neutral-500 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <span className="w-1.5 h-1.5 bg-neutral-500 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <span className="w-1.5 h-1.5 bg-neutral-500 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                </div>
+            return (
+              <div key={msg.id} className={`landing-chat-msg ${isUser ? 'landing-chat-user' : 'landing-chat-ai'}`}>
+                {/* 用户消息 */}
+                {isUser && textParts.map((part, i) => (
+                  <div key={i} className="landing-bubble-user">{(part as { text: string }).text}</div>
+                ))}
+
+                {/* AI 消息：工具调用 + 文本 */}
+                {!isUser && (
+                  <>
+                    {toolParts.length > 0 && (
+                      <div className="mb-1.5">
+                        {toolParts.map((part, i) => (
+                          <ToolCallCard key={i} part={part as Record<string, unknown>} />
+                        ))}
+                      </div>
+                    )}
+                    {textParts.map((part, i) => (
+                      <div key={i} className="landing-bubble-ai">
+                        <MarkdownMessage content={(part as { text: string }).text} />
+                      </div>
+                    ))}
+                  </>
+                )}
               </div>
-            </div>
-          )}
+            )
+          })}
+
+          {/* 加载态：思考中 / 搜索中 */}
+          {isLoading && (() => {
+            const last = messages[messages.length - 1]
+            if (!last) return null
+            // 刚发出消息，等待响应
+            if (last.role === 'user') {
+              return (
+                <div className="landing-chat-msg landing-chat-ai">
+                  <div className="landing-bubble-ai flex items-center gap-2 text-xs text-neutral-400">
+                    <Loader2 className="w-3 h-3 animate-spin" />
+                    <span className="animate-pulse">思考中...</span>
+                  </div>
+                </div>
+              )
+            }
+            // AI 正在调用工具
+            if (last.role === 'assistant') {
+              const hasRunningTool = last.parts?.some(
+                p => isToolPart(p as Record<string, unknown>) &&
+                     ((p as Record<string, unknown>).state === 'input-streaming' || (p as Record<string, unknown>).state === 'input-available')
+              )
+              if (hasRunningTool) {
+                return (
+                  <div className="landing-chat-msg landing-chat-ai">
+                    <div className="landing-bubble-ai flex items-center gap-2 text-xs text-neutral-400">
+                      <Loader2 className="w-3 h-3 animate-spin text-emerald-400" />
+                      <span className="animate-pulse">正在搜索信息...</span>
+                    </div>
+                  </div>
+                )
+              }
+            }
+            return null
+          })()}
           <div ref={chatEndRef} />
         </div>
 

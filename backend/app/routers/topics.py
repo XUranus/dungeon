@@ -8,12 +8,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models import Topic, Comment
-from app.auth import get_current_admin
+from app.auth import verify_api_key
 
 router = APIRouter(
     prefix="/api/topics",
     tags=["topics"],
-    dependencies=[Depends(get_current_admin)],
+    dependencies=[Depends(verify_api_key)],
 )
 
 

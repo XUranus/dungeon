@@ -67,6 +67,44 @@ TOOLS: list[dict] = [
             "parameters": {"type": "object", "properties": {}},
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_current_date",
+            "description": "获取当前日期和时间。当用户问题涉及'今天''现在''近期'等时间相关表述时，先调用此工具确认当前日期。",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_knowledge",
+            "description": (
+                "搜索星主的历史观点、文章和发言知识库。"
+                "当用户问题涉及投资建议、持仓、板块观点、个股分析时，必须先搜索知识库。"
+                "支持按时间范围过滤，可指定只搜索最近 N 天的内容。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "搜索关键词，如 '美股推荐' '半导体持仓' 'A股调仓'",
+                    },
+                    "days": {
+                        "type": "integer",
+                        "description": "只搜索最近 N 天的内容。涉及时效性问题时建议设为 30。",
+                    },
+                    "content_type": {
+                        "type": "string",
+                        "enum": ["article", "talk", "q&a"],
+                        "description": "筛选内容类型：article(专栏文章), talk(发言), q&a(问答)",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 
@@ -99,6 +137,14 @@ async def execute_tool(name: str, arguments: dict) -> str:
             return await _get_stock_quote(arguments.get("symbol", ""))
         elif name == "get_market_overview":
             return await _get_market_overview()
+        elif name == "get_current_date":
+            return _get_current_date()
+        elif name == "search_knowledge":
+            return await _search_knowledge(
+                query=arguments.get("query", ""),
+                days=arguments.get("days"),
+                content_type=arguments.get("content_type"),
+            )
         else:
             return f"未知工具: {name}"
     except Exception as e:
@@ -270,3 +316,109 @@ async def _get_market_overview() -> str:
             parts.append(f"- **{name}**: 格式化失败 ({e})")
 
     return f"**主要市场指数** ({datetime.now().strftime('%Y-%m-%d %H:%M')})\n\n" + "\n".join(parts)
+
+
+def _get_current_date() -> str:
+    """返回当前日期和时间"""
+    now = datetime.now()
+    weekdays = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    return f"今天是 {now.strftime('%Y年%m月%d日')} {weekdays[now.weekday()]} {now.strftime('%H:%M')}"
+
+
+async def _search_knowledge(query: str, days: int | None = None, content_type: str | None = None) -> str:
+    """搜索星主知识库（向量 + BM25 混合检索）"""
+    from app.services.embedding import get_embedding
+    from app.services.vectorstore import query as vector_query
+    from app.services import hybrid_retriever
+    from app.config import settings
+
+    if not query.strip():
+        return "请提供搜索关键词"
+
+    # 构建日期过滤条件
+    date_cutoff = None
+    if days and days > 0:
+        from datetime import timedelta
+        date_cutoff = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+
+    # 向量检索
+    try:
+        embedding = await get_embedding(query)
+        dense_raw = vector_query(query_embedding=embedding, n_results=30)
+    except Exception as e:
+        logger.error(f"知识库向量检索失败: {e}")
+        dense_raw = {"ids": [[]], "documents": [[]], "metadatas": [[]], "distances": [[]]}
+
+    dense_metas = dense_raw.get("metadatas", [[]])[0]
+    dense_docs = dense_raw.get("documents", [[]])[0]
+
+    dense_results = []
+    for i in range(len(dense_docs)):
+        meta = dense_metas[i] if i < len(dense_metas) else {}
+        # 日期过滤
+        if date_cutoff:
+            pub = meta.get("published_at", "")
+            if pub and pub[:10] < date_cutoff:
+                continue
+        # 内容类型过滤
+        if content_type and meta.get("content_type") != content_type:
+            continue
+        dense_results.append({
+            "id": dense_raw["ids"][0][i],
+            "document": dense_docs[i],
+            "metadata": meta,
+        })
+
+    # BM25 检索
+    bm25_results = []
+    if settings.enable_bm25:
+        try:
+            bm25_all = hybrid_retriever.bm25_search(query, top_k=30)
+            for r in bm25_all:
+                meta = r.get("metadata", {})
+                if date_cutoff:
+                    pub = meta.get("published_at", "")
+                    if pub and pub[:10] < date_cutoff:
+                        continue
+                if content_type and meta.get("content_type") != content_type:
+                    continue
+                bm25_results.append(r)
+        except Exception:
+            pass
+
+    # RRF 融合
+    if bm25_results:
+        final = hybrid_retriever.reciprocal_rank_fusion(dense_results, bm25_results, k=60, top_k=5)
+    else:
+        final = dense_results[:5]
+
+    # 时效性 + 精华加权
+    final = hybrid_retriever.apply_boost(final)
+
+    if not final:
+        return f"未找到与'{query}'相关的内容" + (f"（最近{days}天）" if days else "")
+
+    # 格式化结果
+    parts = []
+    for i, item in enumerate(final, 1):
+        meta = item.get("metadata", {})
+        doc = item.get("document", "")
+        platform = {"zhihu": "知乎", "zsxq": "知识星球"}.get(meta.get("platform", ""), meta.get("platform", ""))
+        ct = meta.get("content_type", "")
+        title = meta.get("topic_title", "")
+        url = meta.get("url", "")
+        pub = meta.get("published_at", "")[:10] if meta.get("published_at") else ""
+
+        header = f"**[{i}] [{platform}|{ct}] {title}**"
+        if pub:
+            header += f" ({pub})"
+        if url:
+            header += f"\n链接: {url}"
+
+        # 截断过长内容
+        if len(doc) > 500:
+            doc = doc[:500] + "..."
+        parts.append(f"{header}\n{doc}")
+
+    suffix = f"\n\n（搜索范围：最近{days}天）" if days else ""
+    return "\n\n---\n\n".join(parts) + suffix

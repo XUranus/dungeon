@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Loader2, Check, Settings, Database, Bot, Activity, Sparkles, Wrench, Key, Globe, TrendingUp, BarChart3 } from 'lucide-react'
+import { Loader2, Check, Settings, Database, Bot, Activity, Sparkles, Wrench, Key, Globe, TrendingUp, BarChart3, Copy, RefreshCw } from 'lucide-react'
 import {
   fetchCrawlInterval, updateCrawlInterval, type CrawlIntervalResponse,
   fetchSystemInfo, updateSystemInfo, type SystemInfo,
@@ -7,6 +7,7 @@ import {
   fetchLogLevel, updateLogLevel,
   startProfessorIndexParse, fetchProfessorIndexParseStatus, fetchProfessorIndexParseHistory,
   fetchProfessorIndexInterval, updateProfessorIndexInterval,
+  fetchApiKeyInfo, refreshApiKey, type KeyInfoResponse,
   type ParseTask,
 } from '../services/api'
 
@@ -37,6 +38,7 @@ const TABS = [
   { key: 'basic', label: '基础', icon: Settings },
   { key: 'crawl', label: '采集', icon: Database },
   { key: 'tools', label: '工具', icon: Bot },
+  { key: 'api', label: 'API', icon: Key },
   { key: 'holdings', label: '持仓', icon: Activity },
 ] as const
 
@@ -66,6 +68,12 @@ export default function SettingsPage() {
   const [logLevel, setLogLevel] = useState<string>('INFO')
   const [logSaving, setLogSaving] = useState(false)
   const [logSaved, setLogSaved] = useState(false)
+
+  // ---- API Key ----
+  const [keyInfo, setKeyInfo] = useState<KeyInfoResponse | null>(null)
+  const [keyRefreshing, setKeyRefreshing] = useState(false)
+  const [keyNew, setKeyNew] = useState<string | null>(null)
+  const [keyCopied, setKeyCopied] = useState(false)
 
   // ---- Professor Index ----
   const [piInterval, setPiInterval] = useState(7)
@@ -121,6 +129,7 @@ export default function SettingsPage() {
       fetchCrawlInterval().then(setCrawlInterval),
       fetchToolsSettings().then(setToolsSettings),
       fetchLogLevel().then((res) => setLogLevel(res.level)),
+      fetchApiKeyInfo().then(setKeyInfo),
       fetchProfessorIndexInterval().then((res) => setPiInterval(res.interval_days)),
       loadPiStatus(),
       loadPiHistory(),
@@ -214,6 +223,32 @@ export default function SettingsPage() {
         setPiParsing(false)
       }
     }
+  }
+
+  const handleKeyRefresh = async () => {
+    if (!confirm('刷新后旧 Key 立即失效，确定继续？')) return
+    setKeyRefreshing(true)
+    setKeyNew(null)
+    setKeyCopied(false)
+    try {
+      const res = await refreshApiKey()
+      setKeyInfo({ api_key_set: true, api_key_preview: res.api_key_preview })
+      setKeyNew(res.api_key)
+    } catch { /* ignore */ } finally { setKeyRefreshing(false) }
+  }
+
+  const handleKeyCopy = () => {
+    const key = keyNew || ''
+    if (!key) return
+    navigator.clipboard.writeText(key)
+    setKeyCopied(true)
+    setTimeout(() => setKeyCopied(false), 2000)
+  }
+
+  const abbreviate = (token: string) => {
+    if (!token) return ''
+    if (token.length <= 32) return token
+    return token.slice(0, 16) + ' ··· ' + token.slice(-12)
   }
 
   // ── Tab Content ──
@@ -625,15 +660,126 @@ export default function SettingsPage() {
     </div>
   )
 
+  const renderApi = () => {
+    const displayValue = keyNew || (keyInfo?.api_key_set ? keyInfo.api_key_preview : '')
+    return (
+      <div className="space-y-6">
+        <section className="glass-card dark:glass-card-dark rounded-xl p-5">
+          <h2 className="text-lg font-medium mb-1 text-neutral-800 dark:text-neutral-200 flex items-center gap-2">
+            <Key className="w-5 h-5" />
+            API Key
+          </h2>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-5">
+            管理后台和外部 Agent（MCP）统一使用同一个 Key 鉴权。
+          </p>
+
+          {loading ? (
+            <div className="flex items-center gap-2 text-neutral-400">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-sm">加载中...</span>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              {/* API Key 展示 */}
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-neutral-50 dark:bg-neutral-800/50 border border-neutral-200 dark:border-neutral-700">
+                <Key className="w-4 h-4 text-neutral-400 dark:text-neutral-500 shrink-0" />
+                <div className="flex-1 min-w-0">
+                  <div className="text-xs text-neutral-500 dark:text-neutral-400 mb-0.5">当前 Key</div>
+                  <code className="text-sm font-mono text-neutral-700 dark:text-neutral-300 truncate block">
+                    {displayValue ? abbreviate(displayValue) : '（未设置）'}
+                  </code>
+                </div>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  {keyInfo?.api_key_set ? (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400">已配置</span>
+                  ) : (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400">未配置</span>
+                  )}
+                  <button
+                    onClick={handleKeyCopy}
+                    disabled={!keyNew}
+                    className="p-1.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40 transition-all border border-neutral-200 dark:border-neutral-700"
+                    title="复制完整 Key"
+                  >
+                    {keyCopied ? <Check className="w-3 h-3 text-green-600" /> : <Copy className="w-3 h-3" />}
+                  </button>
+                  <button
+                    onClick={handleKeyRefresh}
+                    disabled={keyRefreshing}
+                    className="p-1.5 rounded-lg bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-40 transition-all border border-neutral-200 dark:border-neutral-700"
+                    title="刷新 Key"
+                  >
+                    {keyRefreshing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                  </button>
+                </div>
+              </div>
+
+              {/* 新 Key 提示 */}
+              {keyNew && (
+                <div className="flex items-center gap-2 text-[11px] text-amber-600 dark:text-amber-400">
+                  <span>⚠️ 新 Key 已生成，旧 Key 已失效。请立即复制保存。</span>
+                </div>
+              )}
+
+              {/* 受保护端点列表 */}
+              <div>
+                <div className="text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-2">受保护的端点</div>
+                <div className="space-y-2">
+                  {[
+                    { method: 'POST', path: '/api/mcp/chat', desc: '流式问答', body: '{"message":"你好"}' },
+                    { method: 'POST', path: '/api/mcp/search', desc: '知识库搜索', body: '{"query":"收益"}' },
+                    { method: 'GET', path: '/api/mcp/topics', desc: '主题列表', body: null },
+                    { method: 'GET', path: '/api/mcp/professor-index', desc: '教授指数', body: null },
+                  ].map((ep) => {
+                    const host = window.location.origin
+                    const key = displayValue || 'YOUR_KEY'
+                    const curl = ep.body
+                      ? `curl -X ${ep.method} ${host}${ep.path} -H "Authorization: Bearer ${key}" -H "Content-Type: application/json" -d '${ep.body}'`
+                      : `curl ${host}${ep.path} -H "Authorization: Bearer ${key}"`
+                    return (
+                      <div key={ep.path} className="flex items-start gap-3 p-3 rounded-lg bg-neutral-50 dark:bg-neutral-800/50 border border-neutral-200 dark:border-neutral-700">
+                        <span className={`shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded mt-0.5 ${
+                          ep.method === 'POST' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                                               : 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                        }`}>{ep.method}</span>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-1">
+                            <span className="font-mono text-xs text-neutral-700 dark:text-neutral-300">{ep.path}</span>
+                            <span className="text-[11px] text-neutral-400 dark:text-neutral-500">{ep.desc}</span>
+                          </div>
+                          <code className="block text-[10px] font-mono text-neutral-500 dark:text-neutral-400 bg-white dark:bg-neutral-900 rounded px-2 py-1.5 border border-neutral-200 dark:border-neutral-700 break-all">
+                            {curl}
+                          </code>
+                        </div>
+                        <button
+                          onClick={() => navigator.clipboard.writeText(curl)}
+                          className="shrink-0 p-1.5 rounded hover:bg-neutral-200 dark:hover:bg-neutral-700 text-neutral-400 dark:text-neutral-500 transition-all"
+                          title="复制 curl"
+                        >
+                          <Copy className="w-3 h-3" />
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+      </div>
+    )
+  }
+
   const tabContent: Record<TabKey, () => React.JSX.Element> = {
     basic: renderBasic,
     crawl: renderCrawl,
     tools: renderTools,
+    api: renderApi,
     holdings: renderHoldings,
   }
 
   return (
-    <div className="p-6 max-w-2xl">
+    <div className="p-6 max-w-4xl">
       <h1 className="text-2xl font-bold mb-4 text-neutral-900 dark:text-neutral-100">系统设置</h1>
 
       {/* Tab bar */}

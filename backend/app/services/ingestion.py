@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import Topic, Comment, CrawlTask, SemanticChunk
 from app.crawlers.base import BaseCrawler
+from app.services.image_store import download_image
 from app.crawlers.zsxq import ZsxqCrawler
 from app.crawlers.zhihu import ZhihuCrawler
 from app.config import settings
@@ -16,6 +17,29 @@ from app.services.vectorstore import add_documents
 from app.utils.text import split_text_to_chunks
 
 logger = logging.getLogger(__name__)
+
+
+async def _download_topic_images(images: list[dict] | None) -> list[dict] | None:
+    """下载 topic/comment 的图片并添加 local_path 字段"""
+    if not images or not isinstance(images, list):
+        return images
+    for img in images:
+        if not isinstance(img, dict):
+            continue
+        # 优先下载 large，其次 thumbnail，最后 url
+        url = None
+        if isinstance(img.get("large"), dict):
+            url = img["large"].get("url")
+        if not url and isinstance(img.get("thumbnail"), dict):
+            url = img["thumbnail"].get("url")
+        if not url:
+            url = img.get("url")
+        if not url:
+            continue
+        local_path = await download_image(url)
+        if local_path:
+            img["local_path"] = local_path
+    return images
 
 
 def get_enabled_platforms() -> list[str]:
@@ -169,7 +193,9 @@ ZSXQ_COLUMNS = {
 }
 
 
-async def _ingest_column_articles(db: AsyncSession, crawler, group_id: str, platform: str) -> int:
+async def _ingest_column_articles(
+    db: AsyncSession, crawler, group_id: str, platform: str, full_crawl: bool = False,
+) -> int:
     """抓取知识星球专栏文章并入库，返回新增文章数"""
     from app.crawlers.zsxq import ZsxqCrawler
     assert isinstance(crawler, ZsxqCrawler)
@@ -179,21 +205,33 @@ async def _ingest_column_articles(db: AsyncSession, crawler, group_id: str, plat
     if not columns:
         logger.info("[zsxq] 专栏列表API不可用，使用硬编码专栏列表")
         columns = [
-            {"column_id": cid, "name": name, "topics_count": 100}
+            {"column_id": cid, "name": name, "topics_count": 1000}
             for name, cid in ZSXQ_COLUMNS.items()
         ]
+
+    # 增量模式：查找已有最新文章的时间作为 since
+    since = None
+    if not full_crawl:
+        from sqlalchemy import func as sa_func
+        latest_result = await db.execute(
+            select(Topic.published_at)
+            .where(Topic.platform == platform, Topic.content_type == "article")
+            .order_by(Topic.published_at.desc())
+            .limit(1)
+        )
+        since = latest_result.scalar_one_or_none()
+        if since:
+            logger.info("[zsxq] 专栏增量模式: since=%s", since)
+        else:
+            logger.info("[zsxq] 专栏全量模式: 首次抓取")
 
     total_saved = 0
     for col in columns:
         col_name = col["name"]
         col_id = col["column_id"]
-        col_count = col.get("topics_count", 100)
 
-        if col_count == 0:
-            continue
-
-        logger.info("[zsxq] 抓取专栏: %s (column_id=%d, %d篇)", col_name, col_id, col_count)
-        articles = await crawler.crawl_column_articles(group_id, col_id, limit=col_count)
+        logger.info("[zsxq] 抓取专栏: %s (column_id=%d)", col_name, col_id)
+        articles = await crawler.crawl_column_articles(group_id, col_id, since=since)
 
         saved = 0
         for ct in articles:
@@ -216,7 +254,7 @@ async def _ingest_column_articles(db: AsyncSession, crawler, group_id: str, plat
                 url=ct.url,
                 like_count=ct.like_count,
                 comment_count=ct.comment_count,
-                images=ct.images or None,
+                images=await _download_topic_images(ct.images) if ct.images else None,
                 raw_json=ct.raw_json,
                 published_at=ct.published_at,
             )
@@ -264,7 +302,18 @@ async def ingest_platform(db: AsyncSession, platform: str, progress_callback=Non
             else:
                 logger.info(f"[{platform}] 全量模式: 首次爬取")
 
-        crawl_result = await crawler.crawl_topics(url_token, since=since)
+        # 获取精华文章列表（仅 zsxq）
+        digest_ids: set[str] = set()
+        if platform == "zsxq" and hasattr(crawler, "fetch_digest_ids"):
+            try:
+                digest_ids = await crawler.fetch_digest_ids(url_token)
+            except Exception:
+                logger.warning(f"[{platform}] 获取精华列表失败，继续爬取")
+
+        crawl_kwargs: dict = {"since": since}
+        if platform == "zsxq":
+            crawl_kwargs["digest_ids"] = digest_ids
+        crawl_result = await crawler.crawl_topics(url_token, **crawl_kwargs)
         if isinstance(crawl_result, tuple):
             crawled_topics, embedded_comments = crawl_result
         else:
@@ -302,7 +351,8 @@ async def ingest_platform(db: AsyncSession, platform: str, progress_callback=Non
                 url=ct.url,
                 like_count=ct.like_count,
                 comment_count=ct.comment_count,
-                images=ct.images or None,
+                images=await _download_topic_images(ct.images) if ct.images else None,
+                is_digest=ct.is_digest,
                 raw_json=ct.raw_json,
                 published_at=ct.published_at,
             )
@@ -342,7 +392,7 @@ async def ingest_platform(db: AsyncSession, platform: str, progress_callback=Non
                         author_name=cc.author_name,
                         content=cc.content,
                         like_count=cc.like_count,
-                        images=cc.images or None,
+                        images=await _download_topic_images(cc.images) if cc.images else None,
                         raw_json=cc.raw_json,
                         published_at=cc.published_at,
                     ))
@@ -372,7 +422,7 @@ async def ingest_platform(db: AsyncSession, platform: str, progress_callback=Non
             try:
                 from app.crawlers.zsxq import ZsxqCrawler
                 if isinstance(crawler, ZsxqCrawler):
-                    article_count = await _ingest_column_articles(db, crawler, url_token, platform)
+                    article_count = await _ingest_column_articles(db, crawler, url_token, platform, full_crawl=full_crawl)
                     topics_count += article_count
                     logger.info(f"[zsxq] 专栏文章入库: 新增{article_count}篇")
             except Exception as e:
@@ -467,6 +517,8 @@ async def _embed_new_content(db: AsyncSession, platform: str):
                 "published_at": topic.published_at.isoformat() if topic.published_at else "",
                 "topic_title": topic.title or "",
                 "url": topic.url or "",
+                "is_digest": 1 if topic.is_digest else 0,
+                "like_count": topic.like_count or 0,
             })
             all_chunk_records.append((topic.id, chunk_text, idx, chroma_id))
 

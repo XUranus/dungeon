@@ -2,23 +2,37 @@ import type { Topic, Comment, CrawlTask, PaginatedResponse } from '../types'
 
 const BASE = '/api'
 
-// ---- Token management ----
+// ---- API Key management ----
+const API_KEY_STORAGE = 'api_key'
 let _token: string | null = null
 
-export function setToken(token: string | null) {
-  _token = token
+export function setApiKey(key: string | null) {
+  _token = key
+  if (key) {
+    localStorage.setItem(API_KEY_STORAGE, key)
+  } else {
+    localStorage.removeItem(API_KEY_STORAGE)
+  }
+}
+
+export function clearApiKey() {
+  _token = null
+  localStorage.removeItem(API_KEY_STORAGE)
 }
 
 // 初始化时从 localStorage 恢复
 if (typeof window !== 'undefined') {
-  _token = localStorage.getItem('admin_token')
+  _token = localStorage.getItem(API_KEY_STORAGE)
 }
 
 /**
  * 将外部图片 URL 通过后端代理加载，绕过知识星球/知乎防盗链。
- * 非 zsxq/zhimg 图片原样返回。
+ * 优先使用本地路径（localPath），非 zsxq/zhimg 图片原样返回。
  */
-export function proxiedImageUrl(url: string): string {
+export function proxiedImageUrl(url: string, localPath?: string): string {
+  if (localPath) {
+    return `${BASE}/proxy/${localPath}`
+  }
   if (url.includes('zsxq.com') || url.includes('zhimg.com')) {
     return `${BASE}/proxy/image?url=${encodeURIComponent(url)}`
   }
@@ -45,16 +59,27 @@ async function request<T>(url: string, options?: RequestInit): Promise<T> {
 }
 
 // ---- Auth ----
-export const login = (password: string) =>
-  request<{ token: string }>('/auth/login', {
+export const verifyApiKey = (api_key: string) =>
+  request<{ ok: boolean }>('/auth/verify', {
     method: 'POST',
-    body: JSON.stringify({ password }),
+    body: JSON.stringify({ api_key }),
   })
 
-export const checkAuth = (token: string) =>
-  request<{ ok: boolean }>('/auth/check', {
-    headers: { Authorization: `Bearer ${token}` },
-  })
+export interface KeyInfoResponse {
+  api_key_set: boolean
+  api_key_preview: string
+}
+
+export interface KeyRefreshResponse {
+  api_key: string
+  api_key_preview: string
+}
+
+export const fetchApiKeyInfo = () =>
+  request<KeyInfoResponse>('/auth/key')
+
+export const refreshApiKey = () =>
+  request<KeyRefreshResponse>('/auth/key/refresh', { method: 'PUT' })
 
 // ---- Dashboard (public) ----
 export interface DashboardSummaryItem {
@@ -227,11 +252,20 @@ export interface ProfessorIndexHolding {
   weight: number | null
 }
 
+export interface ProfessorIndexSourceArticle {
+  id: number
+  title: string | null
+  url: string | null
+  published_at: string | null
+  content_type: string
+}
+
 export interface ProfessorIndexVersion {
   snapshot_id: number
   snapshot_at: string | null
   notes: string | null
   holdings: ProfessorIndexHolding[]
+  source_articles: ProfessorIndexSourceArticle[]
 }
 
 export type ProfessorIndexData = Record<string, ProfessorIndexVersion | null>

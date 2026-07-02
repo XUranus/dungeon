@@ -147,6 +147,9 @@ async def rag_query_stream(
         final_results = dense_results[:top_k]
         logger.info(f"Dense-only RAG: {len(final_results)} results")
 
+    # ── 时效性 + 精华加权 ──
+    final_results = hybrid_retriever.apply_boost(final_results)
+
     # ── 构建上下文 ──
     context_parts: list[str] = []
     for i, item in enumerate(final_results):

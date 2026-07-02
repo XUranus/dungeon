@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select, desc
 
-from app.auth import get_current_admin
+from app.auth import verify_api_key
 from app.config import settings
 from app.database import async_session
 from app.models import ProfessorIndexParseTask
@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/professor-index",
     tags=["professor-index"],
-    dependencies=[Depends(get_current_admin)],
+    dependencies=[Depends(verify_api_key)],
 )
 
 public_router = APIRouter(prefix="/api/dashboard/professor-index", tags=["professor-index"])

@@ -1,52 +1,45 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
-import { login as apiLogin, checkAuth, setToken as setApiToken } from '../services/api'
+import { verifyApiKey, setApiKey, clearApiKey } from '../services/api'
 
 interface AuthContextType {
   token: string | null
   isAdmin: boolean
-  login: (password: string) => Promise<void>
+  login: (apiKey: string) => Promise<void>
   logout: () => void
 }
 
 const AuthContext = createContext<AuthContextType | null>(null)
 
-const TOKEN_KEY = 'admin_token'
+const API_KEY_STORAGE = 'api_key'
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [token, setTokenState] = useState<string | null>(() => {
-    const saved = localStorage.getItem(TOKEN_KEY)
-    setApiToken(saved)
-    return saved
+    return localStorage.getItem(API_KEY_STORAGE)
   })
 
   const isAdmin = token !== null
 
-  // 同步 token 到 API service
-  useEffect(() => {
-    setApiToken(token)
-  }, [token])
-
-  // 启动时验证 token 是否仍有效
+  // 启动时验证已存储的 key 是否仍有效
   useEffect(() => {
     if (!token) return
-    checkAuth(token)
+    setApiKey(token)
+    verifyApiKey(token)
       .then(() => {})
       .catch(() => {
-        // token 失效，清除
         setTokenState(null)
-        localStorage.removeItem(TOKEN_KEY)
+        clearApiKey()
       })
   }, [token])
 
-  const login = async (password: string) => {
-    const res = await apiLogin(password)
-    setTokenState(res.token)
-    localStorage.setItem(TOKEN_KEY, res.token)
+  const login = async (apiKey: string) => {
+    await verifyApiKey(apiKey)
+    setApiKey(apiKey)
+    setTokenState(apiKey)
   }
 
   const logout = () => {
     setTokenState(null)
-    localStorage.removeItem(TOKEN_KEY)
+    clearApiKey()
   }
 
   return (

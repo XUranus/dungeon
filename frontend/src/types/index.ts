@@ -2,13 +2,16 @@ export interface TopicImage {
   image_id?: number
   type?: string
   url?: string
+  local_path?: string
   thumbnail?: {
     url: string
+    local_path?: string
     width?: number
     height?: number
   }
   large?: {
     url: string
+    local_path?: string
     width?: number
     height?: number
   }

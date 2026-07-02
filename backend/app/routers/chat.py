@@ -5,7 +5,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 
 from app.services.rag import rag_query_stream
-from app.auth import get_current_admin
+from app.auth import verify_api_key
 from app.schemas import ChatRequestBase, UIMessage
 from app.utils.streaming import ui_stream_response
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/chat",
     tags=["chat"],
-    dependencies=[Depends(get_current_admin)],
+    dependencies=[Depends(verify_api_key)],
 )
 
 

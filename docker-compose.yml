@@ -26,7 +26,9 @@ services:
     container_name: dungeon-lord-frontend
     restart: unless-stopped
     ports:
-      - "80:80"
+      - "6666:80"
+    volumes:
+      - ./data/images:/usr/share/nginx/images:ro
     depends_on:
       backend:
         condition: service_healthy
