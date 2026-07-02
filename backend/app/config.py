@@ -132,12 +132,18 @@ class _Settings:
         return dict(_DEFAULTS)
 
     def _save(self):
-        """写入 config.json（原子写入）"""
+        """写入 config.json（兼容 Docker bind mount）"""
         _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        content = json.dumps(self._data, ensure_ascii=False, indent=2)
         tmp = _CONFIG_PATH.with_suffix(".tmp")
         try:
-            tmp.write_text(json.dumps(self._data, ensure_ascii=False, indent=2), "utf-8")
+            tmp.write_text(content, "utf-8")
             tmp.replace(_CONFIG_PATH)
+        except OSError:
+            # Docker bind mount 无法原子替换，回退为直接写入
+            _CONFIG_PATH.write_text(content, "utf-8")
+            if tmp.exists():
+                tmp.unlink()
         except Exception:
             if tmp.exists():
                 tmp.unlink()
