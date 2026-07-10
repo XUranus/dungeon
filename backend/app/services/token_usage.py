@@ -1,7 +1,11 @@
 """Token 用量统计服务 — 记录每次 LLM 调用的 token 消耗，按月汇总"""
 
+import asyncio
 import logging
+import threading
+import time
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select, func, extract
 
@@ -10,27 +14,91 @@ from app.models import TokenUsage
 
 logger = logging.getLogger(__name__)
 
+# ── 批量写入缓冲 ──
+_USAGE_BUFFER: list[dict[str, Any]] = []
+_USAGE_BUFFER_LOCK = threading.Lock()
+_USAGE_BUFFER_SIZE = 50
+_USAGE_FLUSH_INTERVAL = 10  # 秒
+_last_flush_time: float = time.monotonic()
 
-async def record_usage(
+
+def _buffer_usage(
     model: str,
     prompt_tokens: int,
     completion_tokens: int,
     total_tokens: int,
     caller: str,
-):
-    """记录一次 LLM 调用的 token 用量"""
+) -> None:
+    """将一条用量记录追加到内存缓冲，达到阈值时触发异步刷写"""
+    global _last_flush_time
+    record = {
+        "model": model,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+        "caller": caller,
+    }
+    should_flush = False
+    with _USAGE_BUFFER_LOCK:
+        _USAGE_BUFFER.append(record)
+        if len(_USAGE_BUFFER) >= _USAGE_BUFFER_SIZE:
+            should_flush = True
+            _last_flush_time = time.monotonic()
+    if should_flush:
+        _schedule_flush()
+
+
+def _schedule_flush() -> None:
+    """尝试获取事件循环并调度一次 flush"""
+    try:
+        loop = asyncio.get_running_loop()
+        loop.create_task(flush_usage_buffer())
+    except RuntimeError:
+        # 不在异步上下文中，直接同步刷写
+        try:
+            asyncio.run(flush_usage_buffer())
+        except Exception:
+            pass
+
+
+def _check_periodic_flush() -> None:
+    """检查是否到了定时刷写的时间"""
+    global _last_flush_time
+    with _USAGE_BUFFER_LOCK:
+        if not _USAGE_BUFFER:
+            return
+        if time.monotonic() - _last_flush_time < _USAGE_FLUSH_INTERVAL:
+            return
+        _last_flush_time = time.monotonic()
+    _schedule_flush()
+
+
+async def flush_usage_buffer() -> None:
+    """将缓冲区中的用量记录批量写入数据库"""
+    global _last_flush_time
+    with _USAGE_BUFFER_LOCK:
+        if not _USAGE_BUFFER:
+            return
+        batch = _USAGE_BUFFER[:]
+        _USAGE_BUFFER.clear()
+        _last_flush_time = time.monotonic()
+
     try:
         async with async_session() as db:
-            db.add(TokenUsage(
-                model=model,
-                prompt_tokens=prompt_tokens,
-                completion_tokens=completion_tokens,
-                total_tokens=total_tokens,
-                caller=caller,
-            ))
+            db.add_all([
+                TokenUsage(
+                    model=r["model"],
+                    prompt_tokens=r["prompt_tokens"],
+                    completion_tokens=r["completion_tokens"],
+                    total_tokens=r["total_tokens"],
+                    caller=r["caller"],
+                )
+                for r in batch
+            ])
             await db.commit()
+            logger.debug("Token 用量批量写入 %d 条", len(batch))
     except Exception as e:
-        logger.warning("Token 用量记录失败: %s", e)
+        logger.warning("Token 用量批量写入失败 (%d 条): %s", len(batch), e)
 
 
 def record_usage_from_response(response, caller: str):
@@ -39,15 +107,12 @@ def record_usage_from_response(response, caller: str):
         usage = getattr(response, "usage", None)
         if usage is None:
             return
-        import asyncio
-        loop = asyncio.get_running_loop()
-        loop.create_task(record_usage(
-            model=getattr(response, "model", "unknown"),
-            prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
-            completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
-            total_tokens=getattr(usage, "total_tokens", 0) or 0,
-            caller=caller,
-        ))
+        model = getattr(response, "model", "unknown")
+        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+        total_tokens = getattr(usage, "total_tokens", 0) or 0
+        _buffer_usage(model, prompt_tokens, completion_tokens, total_tokens, caller)
+        _check_periodic_flush()
     except Exception as e:
         logger.debug("Token usage record skipped: %s", e)
 

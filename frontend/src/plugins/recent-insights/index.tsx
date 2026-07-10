@@ -4,6 +4,7 @@ import {
 } from 'lucide-react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import rehypeSanitize from 'rehype-sanitize'
 import {
   fetchInsightReports,
   type InsightReportItem,
@@ -28,12 +29,6 @@ function formatDate(dateStr: string | null): string {
   return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
 }
 
-function formatDateShort(dateStr: string | null): string {
-  if (!dateStr) return ''
-  const d = new Date(dateStr)
-  return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
-}
-
 /* ── 报告卡片 ── */
 function ReportCard({ report, expanded, onToggle }: {
   report: InsightReportItem
@@ -41,8 +36,8 @@ function ReportCard({ report, expanded, onToggle }: {
   onToggle: () => void
 }) {
   const [sourcesOpen, setSourcesOpen] = useState(false)
-  const startDate = formatDateShort(report.time_range_start)
-  const endDate = formatDateShort(report.time_range_end)
+  const startDate = formatDate(report.time_range_start)
+  const endDate = formatDate(report.time_range_end)
   const generatedAgo = formatDate(report.generated_at)
   const sources = report.sources_json || []
 
@@ -77,7 +72,7 @@ function ReportCard({ report, expanded, onToggle }: {
         <div className="mt-3 pt-3 border-t border-white/5">
           {/* 报告正文 — Markdown 渲染 */}
           <div className="text-sm text-neutral-300 leading-relaxed prose prose-invert prose-sm max-w-none">
-            <Markdown remarkPlugins={[remarkGfm]}>{report.content}</Markdown>
+            <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSanitize]}>{report.content}</Markdown>
           </div>
 
           {/* 数据来源 — 默认折叠 */}

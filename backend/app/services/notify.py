@@ -10,6 +10,9 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
+# 通知正文最大长度
+_NOTIFY_BODY_MAX_LEN = 2000
+
 
 async def _send_async(
     subject: str,
@@ -23,9 +26,13 @@ async def _send_async(
         logger.debug("NotifyHub 未配置，跳过通知")
         return False
 
+    # 截断过长的 body
+    if len(body) > _NOTIFY_BODY_MAX_LEN:
+        body = body[:_NOTIFY_BODY_MAX_LEN] + "...(已截断)"
+
     payload = {
         "channel": "push",
-        "to": "*",
+        "to": settings.notifyhub_to,
         "subject": subject,
         "body": body,
         "format": fmt,
@@ -62,10 +69,20 @@ def notify(
     """发送通知（fire-and-forget，不阻塞调用方）"""
     try:
         loop = asyncio.get_running_loop()
-        loop.create_task(_send_async(subject, body, fmt))
+        task = loop.create_task(_send_async(subject, body, fmt))
+        task.add_done_callback(_log_task_exception)
     except RuntimeError:
         # 无事件循环时同步发送（启动阶段）
         try:
             asyncio.run(_send_async(subject, body, fmt))
         except Exception:
             pass
+
+
+def _log_task_exception(task: asyncio.Task) -> None:
+    """记录后台任务中未处理的异常，避免静默吞掉"""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        logger.warning("通知后台任务异常: %s", exc)

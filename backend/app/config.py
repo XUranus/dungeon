@@ -63,6 +63,7 @@ _DEFAULTS: dict = {
     "insight_report_ndays": 3,
     "notifyhub_key": "",
     "notifyhub_url": "",
+    "notifyhub_to": "*",
 }
 
 

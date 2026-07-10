@@ -2,13 +2,18 @@
 
 import logging
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 
+from app.auth import verify_api_key
 from app.services.token_usage import get_monthly_stats
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/token-usage", tags=["token-usage"])
+router = APIRouter(
+    prefix="/api/token-usage",
+    tags=["token-usage"],
+    dependencies=[Depends(verify_api_key)],
+)
 
 
 @router.get("")

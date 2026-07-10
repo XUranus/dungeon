@@ -72,7 +72,7 @@ async def generate_insight_report(ndays: int | None = None) -> dict:
         model=settings.openai_model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.3,
-        max_tokens=100000,
+        max_tokens=15000,
     )
     record_usage_from_response(response, "insight")
     content = response.choices[0].message.content or ""
@@ -143,9 +143,11 @@ async def has_new_data_since_last_report() -> bool:
             return count > 0
 
         # 检查最新报告生成后是否有新 Topic
+        # 使用 published_at 比较，避免 crawled_at (func.now()=UTC)
+        # 与 generated_at (UTC+8 naive) 之间的时区差异导致偏差
         count = (await db.execute(
             select(func.count(Topic.id))
-            .where(Topic.crawled_at > last_report.generated_at)
+            .where(Topic.published_at > last_report.generated_at)
         )).scalar() or 0
         return count > 0
 
