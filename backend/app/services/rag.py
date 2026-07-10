@@ -5,15 +5,44 @@ import logging
 import re
 from typing import AsyncGenerator, Any
 
+from openai import (
+    AuthenticationError,
+    PermissionDeniedError,
+    RateLimitError,
+    BadRequestError,
+    APIConnectionError,
+    APITimeoutError,
+)
 from app.config import settings
 from app.services.llm_client import get_llm_client
-from app.services.embedding import get_embedding
+from app.services.embedding import get_embedding, format_embedding_error
 from app.services.vectorstore import query
 from app.services import hybrid_retriever
 from app.services.tools import get_enabled_tools, execute_tool
 from app.services.audit import log_llm_call
 
 logger = logging.getLogger(__name__)
+
+
+def _format_llm_error(e: Exception) -> str:
+    """将LLM异常转换为用户友好的错误信息"""
+    if isinstance(e, AuthenticationError):
+        return "API Key 无效或已过期，请在设置页面更新 OpenAI API Key"
+    elif isinstance(e, PermissionDeniedError):
+        return "API Key 权限不足，请检查 Key 是否有访问该模型的权限"
+    elif isinstance(e, RateLimitError):
+        return "API 调用频率超限，请稍后重试"
+    elif isinstance(e, BadRequestError):
+        msg = str(e)
+        if "model" in msg.lower() or "not found" in msg.lower():
+            return "配置的模型不存在，请在设置页面检查模型名称"
+        return f"请求错误: {msg[:100]}"
+    elif isinstance(e, APIConnectionError):
+        return "无法连接到 API 服务，请检查网络或 API 地址配置"
+    elif isinstance(e, APITimeoutError):
+        return "API 请求超时，请稍后重试"
+    else:
+        return "模型服务异常，请稍后重试"
 
 SYSTEM_PROMPT = f'''你是一个财经观点分析助手。你的任务是根据{settings.author_name or '星主'}在知乎和知识星球上的真实发言记录，回答用户的问题。
 
@@ -55,6 +84,8 @@ _TOOL_CALL_RE = re.compile(
     r"<tool_call>\s*<function=(\w+)>(.*?)</function>\s*(?:<parameter=(\w+)>(.*?)</parameter>\s*)*</tool_call>",
     re.DOTALL,
 )
+# 宽松检测：文本中是否包含 <tool_call> 标签
+_HAS_TOOL_CALL_TAG = re.compile(r"<tool_call>", re.DOTALL)
 
 
 def _strip_text_tool_calls(text: str) -> str:
@@ -90,9 +121,9 @@ async def rag_query_stream(
     """
     try:
         question_embedding = await get_embedding(question)
-    except Exception:
+    except Exception as e:
         logger.exception("Embedding生成失败")
-        yield {"type": "error", "data": "Embedding服务异常，请稍后重试"}
+        yield {"type": "error", "data": format_embedding_error(e)}
         return
 
     # ── Dense 向量检索 ──
@@ -206,9 +237,9 @@ async def rag_query_stream(
 
     try:
         response = await client.chat.completions.create(**create_kwargs)
-    except Exception:
+    except Exception as e:
         logger.exception("LLM第一次调用失败")
-        yield {"type": "error", "data": "模型服务异常，请稍后重试"}
+        yield {"type": "error", "data": _format_llm_error(e)}
         return
 
     # ── 收集第一次响应 ──
@@ -267,7 +298,7 @@ async def rag_query_stream(
         clean_text = _strip_text_tool_calls(full_text)
         if clean_text:
             yield {"type": "text", "data": clean_text}
-        logger.warning(f"检测到畸形 <tool_call>（正则未匹配），已过滤。raw={full_text[:300]}")
+        logger.warning(f"检测到畸形 <tool_call>（正则未匹配），已过滤并重试。raw={full_text[:300]}")
     else:
         if full_text:
             yield {"type": "text", "data": full_text}
@@ -282,9 +313,9 @@ async def rag_query_stream(
                 temperature=0.3,
                 stream=True,
             )
-        except Exception:
+        except Exception as e:
             logger.exception(f"LLM第二次调用失败（{label}）")
-            yield {"type": "error", "data": "模型服务异常，请稍后重试"}
+            yield {"type": "error", "data": _format_llm_error(e)}
             return
 
         full = ""
@@ -340,6 +371,11 @@ async def rag_query_stream(
                 "content": result,
             })
 
+        # 移除系统提示中的工具使用说明，避免模型再次调用工具
+        messages[0] = {
+            "role": "system",
+            "content": messages[0]["content"].replace("\n\n" + TOOL_USAGE_PROMPT, ""),
+        }
         async for event in _stream_followup(messages, "native_tools"):
             yield event
 

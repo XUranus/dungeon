@@ -9,6 +9,7 @@ import {
   fetchSystemInfo, updateSystemInfo, type SystemInfo,
   updateSystemAvatar, uploadSystemAvatar,
   fetchSystemOwner, updateSystemOwnerName,
+  fetchLLMConfig, updateLLMConfig, type LLMConfig,
   fetchToolsSettings, updateToolsSettings, type ToolsSettings,
   fetchLogLevel, updateLogLevel,
   fetchApiKeyInfo, refreshApiKey, type KeyInfoResponse,
@@ -28,8 +29,9 @@ const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
 
 const TABS = [
   { key: 'basic', label: '基础', icon: Settings },
+  { key: 'llm', label: 'LLM', icon: Bot },
   { key: 'crawl', label: '采集', icon: Database },
-  { key: 'tools', label: '工具', icon: Bot },
+  { key: 'tools', label: '工具', icon: Wrench },
   { key: 'api', label: 'API', icon: Key },
   { key: 'plugins', label: '插件', icon: Puzzle },
 ] as const
@@ -60,6 +62,13 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
   const [loading, setLoading] = useState(true)
+
+  // ---- LLM config ----
+  const [llmConfig, setLlmConfig] = useState<LLMConfig | null>(null)
+  const [llmApiKeyInput, setLlmApiKeyInput] = useState('')
+  const [llmSaving, setLlmSaving] = useState(false)
+  const [llmSaved, setLlmSaved] = useState(false)
+  const [llmError, setLlmError] = useState('')
 
   // ---- Tools settings ----
   const [toolsSettings, setToolsSettings] = useState<ToolsSettings | null>(null)
@@ -96,6 +105,10 @@ export default function SettingsPage() {
       fetchSystemInfo().then(setSysInfo),
       fetchSystemOwner().then((res) => { setOwnerName(res.owner_name); setAvatarUrl(res.avatar_url) }),
       fetchCrawlInterval().then(setCrawlInterval),
+      fetchLLMConfig().then((res) => {
+        setLlmConfig(res)
+        // 不回填API Key，让用户手动输入
+      }),
       fetchToolsSettings().then(setToolsSettings),
       fetchLogLevel().then((res) => setLogLevel(res.level)),
       fetchApiKeyInfo().then(setKeyInfo),
@@ -155,6 +168,28 @@ export default function SettingsPage() {
       setAvatarUploading(false)
       if (fileInputRef.current) fileInputRef.current.value = ''
     }
+  }
+
+  const handleLLMSave = async () => {
+    if (!llmConfig) return
+    setLlmSaving(true)
+    setLlmSaved(false)
+    setLlmError('')
+    try {
+      const updateData: LLMConfig = {
+        ...llmConfig,
+        // 如果用户输入了新的API Key，则使用新的；否则保持原样（脱敏的）
+        openai_api_key: llmApiKeyInput || llmConfig.openai_api_key,
+      }
+      const res = await updateLLMConfig(updateData)
+      setLlmConfig(res)
+      setLlmApiKeyInput('') // 清空输入框
+      setLlmSaved(true)
+      setTimeout(() => setLlmSaved(false), 2000)
+    } catch (err) {
+      setLlmError(err instanceof Error ? err.message : '保存失败')
+      setTimeout(() => setLlmError(''), 3000)
+    } finally { setLlmSaving(false) }
   }
 
   const handleIntervalChange = async (minutes: number) => {
@@ -488,6 +523,125 @@ export default function SettingsPage() {
 
       <p className="text-xs text-neutral-400 dark:text-neutral-500">
         爬虫 Cookie、JWT Secret 等敏感配置请通过 config.json 文件设置。
+      </p>
+    </div>
+  )
+
+  const renderLLM = () => (
+    <div className="space-y-5">
+      <section className="glass-card dark:glass-card-dark rounded-xl p-5">
+        <h2 className="text-lg font-medium mb-1 text-neutral-800 dark:text-neutral-200">LLM 配置</h2>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-4">
+          配置大语言模型的 API 地址、模型名称和密钥
+        </p>
+
+        {llmConfig ? (
+          <div className="space-y-4">
+            {/* API Key */}
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">API Key</label>
+              <input
+                type="password"
+                value={llmApiKeyInput || llmConfig.openai_api_key}
+                onChange={(e) => setLlmApiKeyInput(e.target.value)}
+                className="w-full bg-neutral-100 dark:bg-neutral-800 rounded-xl px-4 py-2.5 text-sm text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-600 border border-neutral-200 dark:border-neutral-700"
+                placeholder="sk-..."
+              />
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                {llmApiKeyInput ? '已修改，保存后生效' : '当前已配置，修改请直接输入新 Key'}
+              </p>
+            </div>
+
+            {/* Base URL */}
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">API Base URL</label>
+              <input
+                value={llmConfig.openai_base_url}
+                onChange={(e) => setLlmConfig({ ...llmConfig, openai_base_url: e.target.value })}
+                className="w-full bg-neutral-100 dark:bg-neutral-800 rounded-xl px-4 py-2.5 text-sm text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-600 border border-neutral-200 dark:border-neutral-700"
+                placeholder="https://api.openai.com/v1"
+              />
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                留空使用 OpenAI 官方地址，或填写兼容 API 地址（如 OneAPI、Azure）
+              </p>
+            </div>
+
+            {/* Model */}
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">模型名称</label>
+              <input
+                value={llmConfig.openai_model}
+                onChange={(e) => setLlmConfig({ ...llmConfig, openai_model: e.target.value })}
+                className="w-full bg-neutral-100 dark:bg-neutral-800 rounded-xl px-4 py-2.5 text-sm text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-600 border border-neutral-200 dark:border-neutral-700"
+                placeholder="gpt-4o"
+              />
+            </div>
+
+            {/* Embedding Model */}
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">Embedding 模型</label>
+              <input
+                value={llmConfig.embedding_model}
+                onChange={(e) => setLlmConfig({ ...llmConfig, embedding_model: e.target.value })}
+                className="w-full bg-neutral-100 dark:bg-neutral-800 rounded-xl px-4 py-2.5 text-sm text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-600 border border-neutral-200 dark:border-neutral-700"
+                placeholder="text-embedding-3-small"
+              />
+            </div>
+
+            {/* Embedding Provider */}
+            <div>
+              <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">Embedding 提供商</label>
+              <div className="flex gap-3">
+                {['openai', 'local'].map((p) => (
+                  <button
+                    key={p}
+                    onClick={() => setLlmConfig({ ...llmConfig, embedding_provider: p })}
+                    className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${
+                      llmConfig.embedding_provider === p
+                        ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-900'
+                        : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700'
+                    }`}
+                  >
+                    {p === 'openai' ? 'OpenAI' : '本地模型'}
+                  </button>
+                ))}
+              </div>
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+                本地模型需要预先下载 BGE-Small-ZH-v1.5
+              </p>
+            </div>
+
+            {/* Save button */}
+            <div className="flex items-center gap-3 pt-2">
+              <button
+                onClick={handleLLMSave}
+                disabled={llmSaving}
+                className="bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-xl px-5 py-2.5 text-sm hover:bg-neutral-800 dark:hover:bg-neutral-100 disabled:opacity-50 transition-all flex items-center gap-1.5"
+              >
+                {llmSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                保存配置
+              </button>
+              {llmSaved && (
+                <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
+                  <Check className="w-3 h-3" /> 已保存
+                </span>
+              )}
+              {llmError && (
+                <span className="text-xs text-red-500 flex items-center gap-1">
+                  <AlertCircle className="w-3 h-3" /> {llmError}
+                </span>
+              )}
+            </div>
+          </div>
+        ) : (
+          <div className="flex items-center justify-center py-8">
+            <Loader2 className="w-5 h-5 animate-spin text-neutral-400" />
+          </div>
+        )}
+      </section>
+
+      <p className="text-xs text-neutral-400 dark:text-neutral-500">
+        修改配置后会自动重试 LLM 连接，无需重启服务。
       </p>
     </div>
   )
@@ -976,6 +1130,7 @@ export default function SettingsPage() {
 
   const tabContent: Record<TabKey, () => React.JSX.Element> = {
     basic: renderBasic,
+    llm: renderLLM,
     crawl: renderCrawl,
     tools: renderTools,
     api: renderApi,

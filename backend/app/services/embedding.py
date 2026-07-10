@@ -2,10 +2,39 @@
 
 import logging
 import os
-from openai import AsyncOpenAI
+from openai import (
+    AsyncOpenAI,
+    AuthenticationError,
+    PermissionDeniedError,
+    RateLimitError,
+    BadRequestError,
+    APIConnectionError,
+    APITimeoutError,
+)
 from app.config import settings
 
 logger = logging.getLogger(__name__)
+
+
+def format_embedding_error(e: Exception) -> str:
+    """将Embedding异常转换为用户友好的错误信息"""
+    if isinstance(e, AuthenticationError):
+        return "API Key 无效或已过期，请在设置页面更新 OpenAI API Key"
+    elif isinstance(e, PermissionDeniedError):
+        return "API Key 权限不足，请检查 Key 是否有访问 Embedding 模型的权限"
+    elif isinstance(e, RateLimitError):
+        return "API 调用频率超限，请稍后重试"
+    elif isinstance(e, BadRequestError):
+        msg = str(e)
+        if "model" in msg.lower() or "not found" in msg.lower():
+            return "配置的 Embedding 模型不存在，请在设置页面检查模型名称"
+        return f"Embedding 请求错误: {msg[:100]}"
+    elif isinstance(e, APIConnectionError):
+        return "无法连接到 API 服务，请检查网络或 API 地址配置"
+    elif isinstance(e, APITimeoutError):
+        return "API 请求超时，请稍后重试"
+    else:
+        return "Embedding 服务异常，请稍后重试"
 
 # ---- 本地模型预检 ----
 LOCAL_MODEL_ID = "BAAI/bge-small-zh-v1.5"

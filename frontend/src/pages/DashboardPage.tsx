@@ -231,20 +231,22 @@ const TOOL_META: Record<string, { label: string; icon: typeof Search; color: str
   get_stock_quote: { label: '查询行情', icon: BarChart3, color: 'text-amber-400' },
   get_market_overview: { label: '市场概况', icon: BarChart3, color: 'text-amber-400' },
   get_current_date: { label: '确认日期', icon: Calendar, color: 'text-neutral-400' },
+  tavily_search: { label: '联网搜索', icon: Globe2, color: 'text-blue-400' },
 }
 
 function isToolPart(p: Record<string, unknown>): boolean {
   const t = String(p.type || '')
-  return t === 'dynamic-tool' || t.startsWith('tool-')
+  // Vercel AI SDK 动态工具调用类型
+  return t === 'dynamic-tool' || t === 'tool-call' || t.startsWith('tool-')
 }
 
 function ToolCallCard({ part }: { part: Record<string, unknown> }) {
   const [expanded, setExpanded] = useState(false)
-  const toolName = String(part.toolName || '')
+  const toolName = String(part.toolName || part.name || '')
   const meta = TOOL_META[toolName] || { label: toolName, icon: Wrench, color: 'text-neutral-400' }
   const Icon = meta.icon
   const state = String(part.state || '')
-  const isRunning = state === 'input-streaming' || state === 'input-available'
+  const isRunning = state === 'input-streaming' || state === 'input-available' || state === ''
   const isDone = state === 'output-available'
   const result = isDone ? String(part.output || '') : ''
 
@@ -288,10 +290,11 @@ function ToolCallCard({ part }: { part: Record<string, unknown> }) {
 
 /* ── AI 研究助手 ── */
 function ResearchAssistant({
-  messages, status, chatRemaining, systemSubtitle, sendMessage,
+  messages, status, error, chatRemaining, systemSubtitle, sendMessage,
 }: {
   messages: ReturnType<typeof useChat>['messages']
   status: ReturnType<typeof useChat>['status']
+  error: ReturnType<typeof useChat>['error']
   chatRemaining: number
   systemSubtitle: string
   sendMessage: ReturnType<typeof useChat>['sendMessage']
@@ -419,6 +422,15 @@ function ResearchAssistant({
             }
             return null
           })()}
+
+          {/* 错误提示 */}
+          {error && (
+            <div className="landing-chat-msg landing-chat-ai">
+              <div className="landing-bubble-ai bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+                {error.message || '请求出错，请稍后重试'}
+              </div>
+            </div>
+          )}
           <div ref={chatEndRef} />
         </div>
 
@@ -451,7 +463,7 @@ export default function DashboardPage() {
   const [loadingSummary, setLoadingSummary] = useState(true)
   const [enabledPlugins, setEnabledPlugins] = useState<PluginMeta[]>([])
 
-  const { messages, sendMessage, status } = useChat({
+  const { messages, sendMessage, status, error } = useChat({
     transport: new DefaultChatTransport({
       api: '/api/dashboard/chat',
       headers: () => {
@@ -539,6 +551,7 @@ export default function DashboardPage() {
       <ResearchAssistant
         messages={messages}
         status={status}
+        error={error}
         chatRemaining={chatRemaining}
         systemSubtitle={systemSubtitle}
         sendMessage={sendMessage}

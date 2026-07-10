@@ -330,3 +330,69 @@ async def update_public_plugins(req: UpdatePluginsRequest):
     settings.update({"enabled_public_plugins": enabled})
     logger.info("公共插件已更新: %s", enabled)
     return UpdatePluginsRequest(enabled_ids=enabled)
+
+
+# ── LLM 配置 ──
+
+class LLMConfigResponse(BaseModel):
+    openai_api_key: str
+    openai_base_url: str
+    openai_model: str
+    embedding_model: str
+    embedding_provider: str
+
+
+class LLMConfigRequest(BaseModel):
+    openai_api_key: str = Field(description="OpenAI API Key")
+    openai_base_url: str = Field(default="", description="API Base URL，留空使用默认")
+    openai_model: str = Field(default="gpt-4o", description="模型名称")
+    embedding_model: str = Field(default="text-embedding-3-small", description="Embedding 模型")
+    embedding_provider: str = Field(default="openai", description="Embedding 提供商: openai 或 local")
+
+
+@router.get("/llm", response_model=LLMConfigResponse)
+async def read_llm_config():
+    """获取 LLM 配置（需管理员）"""
+    api_key = settings.openai_api_key
+    # 脱敏显示：只显示前4位和后4位
+    if api_key and len(api_key) > 8:
+        masked_key = api_key[:4] + "*" * (len(api_key) - 8) + api_key[-4:]
+    else:
+        masked_key = api_key
+    return LLMConfigResponse(
+        openai_api_key=masked_key,
+        openai_base_url=settings.openai_base_url,
+        openai_model=settings.openai_model,
+        embedding_model=settings.embedding_model,
+        embedding_provider=settings.embedding_provider,
+    )
+
+
+@router.put("/llm", response_model=LLMConfigResponse)
+async def update_llm_config(req: LLMConfigRequest):
+    """更新 LLM 配置（需管理员）"""
+    from app.services.llm_client import reset_llm_client
+    update_data = {
+        "openai_api_key": req.openai_api_key,
+        "openai_base_url": req.openai_base_url,
+        "openai_model": req.openai_model,
+        "embedding_model": req.embedding_model,
+        "embedding_provider": req.embedding_provider,
+    }
+    settings.update(update_data)
+    # 重置 LLM 客户端以使用新配置
+    reset_llm_client()
+    logger.info("LLM 配置已更新")
+    # 返回脱敏后的配置
+    api_key = req.openai_api_key
+    if api_key and len(api_key) > 8:
+        masked_key = api_key[:4] + "*" * (len(api_key) - 8) + api_key[-4:]
+    else:
+        masked_key = api_key
+    return LLMConfigResponse(
+        openai_api_key=masked_key,
+        openai_base_url=req.openai_base_url,
+        openai_model=req.openai_model,
+        embedding_model=req.embedding_model,
+        embedding_provider=req.embedding_provider,
+    )

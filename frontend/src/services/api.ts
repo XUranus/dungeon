@@ -454,3 +454,23 @@ export const reportPluginEvent = (pluginId: string, event: string, status = 'ok'
 /** Plugin: read own config (public) */
 export const fetchPluginConfigPublic = (pluginId: string) =>
   request<PluginConfigData>(`/plugins/config/${pluginId}`)
+
+
+// ── LLM 配置 ──
+
+export interface LLMConfig {
+  openai_api_key: string
+  openai_base_url: string
+  openai_model: string
+  embedding_model: string
+  embedding_provider: string
+}
+
+export const fetchLLMConfig = () =>
+  request<LLMConfig>('/settings/llm')
+
+export const updateLLMConfig = (data: LLMConfig) =>
+  request<LLMConfig>('/settings/llm', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
