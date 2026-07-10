@@ -10,9 +10,6 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-# 通知正文最大长度
-_NOTIFY_BODY_MAX_LEN = 2000
-
 
 async def _send_async(
     subject: str,
@@ -25,10 +22,6 @@ async def _send_async(
     if not url or not key:
         logger.debug("NotifyHub 未配置，跳过通知")
         return False
-
-    # 截断过长的 body
-    if len(body) > _NOTIFY_BODY_MAX_LEN:
-        body = body[:_NOTIFY_BODY_MAX_LEN] + "...(已截断)"
 
     payload = {
         "channel": "push",
