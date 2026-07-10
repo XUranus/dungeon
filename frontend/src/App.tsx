@@ -10,6 +10,11 @@ import ChatPage from './pages/ChatPage'
 import TopicsPage from './pages/TopicsPage'
 import SourcesPage from './pages/SourcesPage'
 import SettingsPage from './pages/SettingsPage'
+import PluginPage from './pages/PluginPage'
+import { initPlugins } from './plugins/registry'
+
+// 启动时自动发现并加载所有插件
+initPlugins()
 
 export default function App() {
   return (
@@ -21,6 +26,7 @@ export default function App() {
             {/* 公共路由 - 无侧边栏 */}
             <Route path="/" element={<DashboardPage />} />
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/p/:pluginId" element={<PluginPage />} />
 
             {/* 管理员路由 - 带侧边栏 */}
             <Route

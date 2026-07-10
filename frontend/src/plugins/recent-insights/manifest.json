@@ -1,0 +1,15 @@
+{
+  "id": "recent-insights",
+  "name": "近期观点",
+  "icon": "MessageSquare",
+  "description": "展示最新市场动态时间线，支持多平台来源过滤",
+  "order": 20,
+  "config_defaults": {
+    "default_limit": 30,
+    "show_platform_filter": true,
+    "auto_refresh_seconds": 0
+  },
+  "hooks": {
+    "topic_created": "刷新观点列表（当新观点入库时）"
+  }
+}

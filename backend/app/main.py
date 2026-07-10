@@ -4,10 +4,11 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 
 from app.database import init_db, async_session, engine
 from app.config import settings
-from app.routers import chat, topics, sources, proxy, auth, dashboard, holdings, professor_index, mcp
+from app.routers import chat, topics, sources, proxy, auth, dashboard, holdings, professor_index, mcp, plugins
 from app.routers import settings as settings_router
 from app.utils.scheduler import setup_scheduler, shutdown_scheduler
 
@@ -89,6 +90,9 @@ async def lifespan(app: FastAPI):
     if settings.enable_bm25:
         from app.services.hybrid_retriever import build_bm25_index
         build_bm25_index()
+    # 初始化插件运行时
+    from app.plugins.runtime import runtime as plugin_runtime
+    plugin_runtime.init()
     yield
     shutdown_scheduler()
 
@@ -121,6 +125,15 @@ app.include_router(professor_index.router)
 app.include_router(professor_index.public_router)
 app.include_router(proxy.router)
 app.include_router(mcp.router)
+app.include_router(plugins.router)
+app.include_router(plugins.public_router)
+
+# 静态文件服务：上传的文件
+import os
+from app.config import PROJECT_ROOT
+_uploads_dir = PROJECT_ROOT / "data" / "uploads"
+os.makedirs(_uploads_dir, exist_ok=True)
+app.mount("/api/uploads", StaticFiles(directory=str(_uploads_dir)), name="uploads")
 
 
 @app.get("/api/health")

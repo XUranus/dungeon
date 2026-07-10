@@ -56,6 +56,9 @@ _DEFAULTS: dict = {
     "enable_tools": True,
     "cors_origins": ["*"],
     "professor_index_interval_days": 7,
+    "system_avatar_url": "",
+    "system_owner_name": "",
+    "enabled_public_plugins": ["professor-index", "recent-insights"],
 }
 
 

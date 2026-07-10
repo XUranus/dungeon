@@ -30,7 +30,7 @@ export function parseQA(content: string): QAPart[] {
   for (let i = 0; i < matches.length; i++) {
     const start = matches[i].endOfHeader
     const end = i + 1 < matches.length ? matches[i + 1].index : content.length
-    const text = content.slice(start, end).trim()
+    const text = content.slice(start, end).replace(/^[:：\s]+/, '').trim()
     if (text) parts.push({ type: matches[i].type, author: matches[i].author, text })
   }
 

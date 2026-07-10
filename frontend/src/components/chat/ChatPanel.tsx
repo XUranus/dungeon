@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport, type UIMessage } from 'ai'
-import { Send, Loader2, Trash2, Square, Globe, TrendingUp, BarChart3 } from 'lucide-react'
+import { Send, Loader2, Trash2, Square, Globe, TrendingUp, BarChart3, XCircle } from 'lucide-react'
 import { useAuth } from '../../contexts/AuthContext'
 import { MarkdownMessage } from './MarkdownMessage'
 import ChatHistoryPanel from './ChatHistoryPanel'
@@ -243,7 +243,7 @@ export default function ChatPanel({ initialSessionId }: Props) {
           {error && (
             <div className="flex justify-start">
               <div className="glass-card dark:glass-card-dark rounded-2xl px-4 py-3 text-red-500 text-sm">
-                ❌ {error.message || '请求出错，请稍后重试'}
+                <XCircle size={14} className="inline mr-1.5 -mt-px" />{error.message || '请求出错，请稍后重试'}
               </div>
             </div>
           )}

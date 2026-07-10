@@ -1,0 +1,16 @@
+{
+  "id": "professor-index",
+  "name": "教授指数",
+  "icon": "TrendingUp",
+  "description": "展示持仓配置（内地版/全球版），含环形图与参考文章。管理员可配置自动解析间隔和手动触发。",
+  "order": 10,
+  "config_defaults": {
+    "auto_parse_enabled": true,
+    "auto_parse_interval_days": 7,
+    "show_donut_chart": true,
+    "max_holdings_display": 20
+  },
+  "hooks": {
+    "crawl_completed": "自动触发教授指数解析（当新文章被抓取时）"
+  }
+}

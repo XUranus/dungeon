@@ -1,6 +1,6 @@
 """数据浏览API（仅管理员）"""
 
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy import select, func
@@ -48,6 +48,8 @@ async def list_topics(
     platform: str | None = None,
     content_type: str | None = None,
     search: str | None = None,
+    date_from: str | None = Query(None, description="起始日期 YYYY-MM-DD"),
+    date_to: str | None = Query(None, description="截止日期 YYYY-MM-DD（含当天）"),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
@@ -65,6 +67,20 @@ async def list_topics(
     if search:
         query = query.where(Topic.content.contains(search))
         count_query = count_query.where(Topic.content.contains(search))
+    if date_from:
+        try:
+            dt_from = datetime.strptime(date_from, "%Y-%m-%d")
+            query = query.where(Topic.published_at >= dt_from)
+            count_query = count_query.where(Topic.published_at >= dt_from)
+        except ValueError:
+            pass
+    if date_to:
+        try:
+            dt_to = datetime.strptime(date_to, "%Y-%m-%d") + timedelta(days=1)
+            query = query.where(Topic.published_at < dt_to)
+            count_query = count_query.where(Topic.published_at < dt_to)
+        except ValueError:
+            pass
 
     total_result = await db.execute(count_query)
     total = total_result.scalar() or 0

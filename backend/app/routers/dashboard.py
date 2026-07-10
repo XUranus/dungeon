@@ -88,6 +88,32 @@ async def _get_or_create_visitor(
 
 # ── 端点 ───────────────────────────────────────────────────────
 
+@router.get("/stats")
+async def dashboard_stats(db: AsyncSession = Depends(get_db)):
+    """公共大屏：返回数据统计"""
+    total = (await db.execute(select(func.count(Topic.id)))).scalar() or 0
+    articles = (await db.execute(
+        select(func.count(Topic.id)).where(Topic.content_type == 'article')
+    )).scalar() or 0
+    qa = (await db.execute(
+        select(func.count(Topic.id)).where(Topic.content_type == 'q&a')
+    )).scalar() or 0
+    return {"total": total, "articles": articles, "qa": qa}
+
+
+@router.get("/plugins")
+async def dashboard_plugins():
+    """公共大屏：返回已启用的插件列表（无需登录）"""
+    from app.routers.settings import REGISTERED_PLUGINS
+    enabled = set(settings.enabled_public_plugins)
+    plugins = [
+        {k: v for k, v in p.items()}
+        for p in sorted(REGISTERED_PLUGINS, key=lambda x: x["order"])
+        if p["id"] in enabled
+    ]
+    return {"plugins": plugins}
+
+
 @router.get("/summary")
 async def dashboard_summary(
     limit: int = 20,

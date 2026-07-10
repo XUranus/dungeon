@@ -1,13 +1,19 @@
 """系统设置 API（仅管理员）"""
 
+import json
 import logging
+import os
+import uuid
+from pathlib import Path
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from pydantic import BaseModel, Field
 
 from app.auth import verify_api_key
-from app.config import settings
+from app.config import settings, PROJECT_ROOT
 from app.utils.scheduler import apply_crawl_interval, get_scheduler_status
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(
     prefix="/api/settings",
@@ -68,6 +74,14 @@ class SystemInfoRequest(BaseModel):
     system_subtitle: str = Field(max_length=100)
 
 
+class SystemAvatarResponse(BaseModel):
+    avatar_url: str
+
+
+class SystemAvatarRequest(BaseModel):
+    avatar_url: str = Field(max_length=500, description="星主头像 URL，留空则使用默认")
+
+
 @public_router.get("/system-info", response_model=SystemInfoResponse)
 async def read_system_info():
     """获取系统名称和副标题（公开，无需登录）"""
@@ -88,6 +102,84 @@ async def update_system_info(req: SystemInfoRequest):
         system_title=req.system_title,
         system_subtitle=req.system_subtitle,
     )
+
+
+# ── 星主信息（公开）──
+
+class SystemOwnerResponse(BaseModel):
+    owner_name: str
+    avatar_url: str
+
+
+class SystemOwnerNameRequest(BaseModel):
+    owner_name: str = Field(max_length=50, description="星主名称")
+
+
+@public_router.get("/system-owner", response_model=SystemOwnerResponse)
+async def read_system_owner():
+    """获取星主名称和头像（公开，无需登录）"""
+    return SystemOwnerResponse(
+        owner_name=settings.system_owner_name,
+        avatar_url=settings.system_avatar_url,
+    )
+
+
+@router.put("/system-owner-name", response_model=SystemOwnerNameRequest)
+async def update_system_owner_name(req: SystemOwnerNameRequest):
+    """更新星主名称（需管理员）"""
+    settings.update({"system_owner_name": req.owner_name})
+    return req
+
+
+# ── 星主头像（公开）──
+
+@public_router.get("/system-avatar", response_model=SystemAvatarResponse)
+async def read_system_avatar():
+    """获取星主头像 URL（公开，无需登录）"""
+    return SystemAvatarResponse(avatar_url=settings.system_avatar_url)
+
+
+@router.put("/system-avatar", response_model=SystemAvatarResponse)
+async def update_system_avatar(req: SystemAvatarRequest):
+    """更新星主头像 URL（需管理员）"""
+    settings.update({"system_avatar_url": req.avatar_url})
+    return SystemAvatarResponse(avatar_url=req.avatar_url)
+
+
+UPLOAD_DIR = PROJECT_ROOT / "data" / "uploads"
+ALLOWED_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"}
+MAX_SIZE = 5 * 1024 * 1024  # 5MB
+
+
+@router.post("/system-avatar/upload", response_model=SystemAvatarResponse)
+async def upload_system_avatar(file: UploadFile = File(...)):
+    """上传星主头像文件（需管理员）"""
+    if file.content_type not in ALLOWED_TYPES:
+        raise HTTPException(status_code=400, detail=f"不支持的文件类型: {file.content_type}，支持: jpg/png/gif/webp/svg")
+
+    data = await file.read()
+    if len(data) > MAX_SIZE:
+        raise HTTPException(status_code=400, detail=f"文件过大: {len(data) / 1024 / 1024:.1f}MB，最大 5MB")
+
+    # 确定扩展名
+    ext_map = {
+        "image/jpeg": ".jpg", "image/png": ".png", "image/gif": ".gif",
+        "image/webp": ".webp", "image/svg+xml": ".svg",
+    }
+    ext = ext_map.get(file.content_type, ".jpg")
+
+    # 保存文件
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
+    filename = f"avatar_{uuid.uuid4().hex[:12]}{ext}"
+    filepath = UPLOAD_DIR / filename
+    with open(filepath, "wb") as f:
+        f.write(data)
+
+    # 更新配置
+    avatar_url = f"/api/uploads/{filename}"
+    settings.update({"system_avatar_url": avatar_url})
+    logger.info("头像已上传: %s", filename)
+    return SystemAvatarResponse(avatar_url=avatar_url)
 
 
 # ── 工具设置 ──
@@ -155,3 +247,86 @@ async def update_log_level(req: LogLevelRequest):
         raise HTTPException(status_code=400, detail=f"无效级别，可选: {', '.join(sorted(_VALID_LEVELS))}")
     logging.getLogger().setLevel(getattr(logging, level_name))
     return LogLevelResponse(level=level_name)
+
+
+# ── 公共插件管理 ──
+
+# 插件目录：frontend/src/plugins/
+_PLUGINS_DIR = PROJECT_ROOT / "frontend" / "src" / "plugins"
+
+
+def _scan_plugins() -> list[dict]:
+    """自动扫描插件目录，读取每个插件的 manifest.json"""
+    plugins = []
+    if not _PLUGINS_DIR.is_dir():
+        logger.warning("插件目录不存在: %s", _PLUGINS_DIR)
+        return plugins
+
+    for entry in sorted(_PLUGINS_DIR.iterdir()):
+        if not entry.is_dir():
+            continue
+        manifest_path = entry / "manifest.json"
+        if not manifest_path.exists():
+            continue
+        try:
+            data = json.loads(manifest_path.read_text("utf-8"))
+            # 校验必填字段
+            required = ("id", "name", "icon", "description", "order")
+            if not all(k in data for k in required):
+                logger.warning("插件 manifest 缺少必填字段 %s: %s", entry.name, manifest_path)
+                continue
+            plugins.append({
+                "id": data["id"],
+                "name": data["name"],
+                "icon": data["icon"],
+                "description": data["description"],
+                "order": int(data["order"]),
+            })
+        except Exception as e:
+            logger.error("读取插件 manifest 失败 %s: %s", manifest_path, e)
+
+    plugins.sort(key=lambda p: p["order"])
+    logger.info("已扫描到 %d 个插件: %s", len(plugins), [p["id"] for p in plugins])
+    return plugins
+
+
+# 启动时扫描一次，缓存结果
+REGISTERED_PLUGINS: list[dict] = _scan_plugins()
+
+
+class PluginItem(BaseModel):
+    id: str
+    name: str
+    icon: str
+    description: str
+    order: int
+    enabled: bool
+
+
+class PublicPluginsResponse(BaseModel):
+    plugins: list[PluginItem]
+
+
+class UpdatePluginsRequest(BaseModel):
+    enabled_ids: list[str] = Field(description="要启用的插件 ID 列表")
+
+
+@router.get("/public-plugins", response_model=PublicPluginsResponse)
+async def read_public_plugins():
+    """获取所有公共插件及其启用状态（需管理员）"""
+    enabled = set(settings.enabled_public_plugins)
+    plugins = [
+        PluginItem(**p, enabled=p["id"] in enabled)
+        for p in sorted(REGISTERED_PLUGINS, key=lambda x: x["order"])
+    ]
+    return PublicPluginsResponse(plugins=plugins)
+
+
+@router.put("/public-plugins", response_model=UpdatePluginsRequest)
+async def update_public_plugins(req: UpdatePluginsRequest):
+    """更新启用的公共插件列表（需管理员）"""
+    valid_ids = {p["id"] for p in REGISTERED_PLUGINS}
+    enabled = [pid for pid in req.enabled_ids if pid in valid_ids]
+    settings.update({"enabled_public_plugins": enabled})
+    logger.info("公共插件已更新: %s", enabled)
+    return UpdatePluginsRequest(enabled_ids=enabled)

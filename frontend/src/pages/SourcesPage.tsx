@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { RefreshCw, AlertCircle, CheckCircle, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { RefreshCw, AlertCircle, AlertTriangle, CheckCircle, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
 import {
   fetchPlatforms,
   crawlAll,
@@ -19,7 +19,7 @@ const platformLabel: Record<string, string> = {
 const isIdle = (s: CrawlProgress | { status: 'idle' }): s is { status: 'idle' } =>
   s.status === 'idle'
 
-const PAGE_SIZE = 20
+const PAGE_SIZE = 10
 
 export default function SourcesPage() {
   const [platforms, setPlatforms] = useState<string[]>([])
@@ -149,7 +149,8 @@ export default function SourcesPage() {
 
       {platforms.length === 0 && !loading && (
         <div className="glass-card dark:glass-card-dark border border-yellow-300/40 dark:border-yellow-600/30 rounded-xl p-3 mb-4 text-sm text-yellow-800 dark:text-yellow-300">
-          ⚠️ 未配置任何平台。请在 config.json 中填写 zsxq_cookie / zsxq_group_id 或 zhihu_cookie / zhihu_url_token。
+          <AlertTriangle size={14} className="inline flex-shrink-0 mr-1 -mt-px" />
+          未配置任何平台。请在 config.json 中填写 zsxq_cookie / zsxq_group_id 或 zhihu_cookie / zhihu_url_token。
         </div>
       )}
 

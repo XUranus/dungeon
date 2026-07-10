@@ -3,22 +3,22 @@ import { useChat } from '@ai-sdk/react'
 import { DefaultChatTransport } from 'ai'
 import {
   Loader2, Send, ArrowUpRight, Heart, MessageSquare,
-  TrendingUp, Globe, Sparkles, ChevronRight, BookOpen,
+  Sparkles, ChevronRight,
   Wrench, Check, Search, BarChart3, Globe2, Calendar,
 } from 'lucide-react'
 import Logo from '../components/Logo'
 import { MarkdownMessage } from '../components/chat/MarkdownMessage'
 import RichContent from '../components/content/RichContent'
-import DonutChart, { type DonutSegment } from '../components/DonutChart'
 import { parseQA } from '../utils/qa'
+import { Link } from 'react-router-dom'
 import {
   fetchSystemInfo,
+  fetchSystemOwner,
   fetchDashboardSummary,
-  fetchProfessorIndex,
+  fetchDashboardStats,
+  fetchEnabledPlugins,
   type DashboardSummaryItem,
-  type ProfessorIndexData,
-  type ProfessorIndexVersion,
-  type ProfessorIndexSourceArticle,
+  type PluginMeta,
 } from '../services/api'
 import { getVisitorId } from '../utils/visitor'
 
@@ -27,20 +27,10 @@ const PLATFORM_LABELS: Record<string, string> = {
   zhihu: '知乎', xueqiu: '雪球', xiaohongshu: '小红书',
   weibo: '微博', douyin: '抖音', zsxq: '星球',
 }
-const PLATFORM_ICONS: Record<string, string> = {
-  zhihu: '知', xueqiu: '雪', xiaohongshu: '红',
-  weibo: '微', douyin: '抖', zsxq: '星',
-}
 const PLATFORM_COLORS: Record<string, string> = {
   zhihu: '#3B82F6', xueqiu: '#F97316', xiaohongshu: '#EF4444',
   weibo: '#F43F5E', douyin: '#A3A3A3', zsxq: '#10B981',
 }
-
-/* ── Donut color palette ── */
-const DONUT_COLORS = [
-  '#10B981', '#3B82F6', '#F59E0B', '#EF4444', '#8B5CF6',
-  '#EC4899', '#14B8A6', '#F97316', '#6366F1', '#84CC16',
-]
 
 function formatDate(dateStr: string | null): string {
   if (!dateStr) return ''
@@ -55,163 +45,75 @@ function formatDate(dateStr: string | null): string {
   return d.toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })
 }
 
-function holdingsToSegments(data: ProfessorIndexVersion): DonutSegment[] {
-  return data.holdings
-    .filter(h => h.weight != null && h.weight > 0)
-    .map((h, i) => ({
-      label: h.name,
-      value: h.weight!,
-      color: DONUT_COLORS[i % DONUT_COLORS.length],
-      code: h.code,
-      market: h.market,
-    }))
-}
-
 /* ── Hero Section ── */
-function HeroSection({ title, subtitle }: { title: string; subtitle: string }) {
+function HeroSection({ title, subtitle, avatarUrl, ownerName, stats }: {
+  title: string; subtitle: string; avatarUrl?: string; ownerName?: string
+  stats?: { total: number; articles: number; qa: number }
+}) {
   return (
     <section className="landing-hero">
-      <div className="landing-hero-glow" />
+      {/* Animated grid background */}
+      <div className="hero-grid" />
+      {/* Floating orbs */}
+      <div className="hero-orb hero-orb-1" />
+      <div className="hero-orb hero-orb-2" />
+      <div className="hero-orb hero-orb-3" />
+      {/* Radial glow */}
+      <div className="hero-glow" />
+
       <div className="landing-hero-content">
+        {/* Avatar */}
+        <div className="hero-avatar-ring">
+          <div className="hero-avatar-ring-inner" />
+          <div className="hero-avatar">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="星主" className="hero-avatar-img" />
+            ) : (
+              <span className="hero-avatar-fallback">
+                <Sparkles className="w-8 h-8" />
+              </span>
+            )}
+          </div>
+        </div>
+
         <div className="landing-hero-badge">
-          <Sparkles className="w-3.5 h-3.5" />
-          <span>AI 驱动的智能投资研究</span>
+          <span className="hero-badge-dot" />
+          <span>{ownerName || 'AI 驱动的智能投资研究'}</span>
         </div>
         <h1 className="landing-hero-title">{title}</h1>
         <p className="landing-hero-subtitle">{subtitle}</p>
-      </div>
-    </section>
-  )
-}
 
-/* ── Source Articles (参考文章) ── */
-function SourceArticles({ articles }: { articles: ProfessorIndexSourceArticle[] }) {
-  const [expanded, setExpanded] = useState(false)
-
-  return (
-    <div className="mt-2">
-      <button
-        onClick={() => setExpanded(!expanded)}
-        className="flex items-center gap-1.5 text-xs text-neutral-500 hover:text-neutral-300 transition-colors"
-      >
-        <BookOpen className="w-3 h-3" />
-        <span>参考文章 ({articles.length})</span>
-        <ChevronRight
-          className={`w-3 h-3 transition-transform ${expanded ? 'rotate-90' : ''}`}
-        />
-      </button>
-      {expanded && (
-        <div className="mt-1.5 space-y-1">
-          {articles.map((a) => (
-            <div key={a.id} className="flex items-center gap-2 text-xs">
-              <span className="text-[10px] px-1 py-0.5 rounded bg-white/5 text-neutral-500 flex-shrink-0">
-                {a.content_type === 'article' ? '文章' : 'Q&A'}
-              </span>
-              {a.url ? (
-                <a
-                  href={a.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="text-neutral-400 hover:text-emerald-400 transition-colors truncate"
-                >
-                  {a.title || `文章 #${a.id}`}
-                </a>
-              ) : (
-                <span className="text-neutral-500 truncate">
-                  {a.title || `文章 #${a.id}`}
-                </span>
-              )}
-              {a.published_at && (
-                <span className="text-neutral-600 flex-shrink-0 ml-auto">
-                  {new Date(a.published_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
-                </span>
-              )}
-            </div>
-          ))}
+        {/* Stats row */}
+        <div className="hero-stats">
+          <div className="hero-stat">
+            <span className="hero-stat-value">{stats?.articles ?? '—'}</span>
+            <span className="hero-stat-label">文章</span>
+          </div>
+          <div className="hero-stat-divider" />
+          <div className="hero-stat">
+            <span className="hero-stat-value">{stats?.qa ?? '—'}</span>
+            <span className="hero-stat-label">问答</span>
+          </div>
+          <div className="hero-stat-divider" />
+          <div className="hero-stat">
+            <span className="hero-stat-value">{stats?.total ?? '—'}</span>
+            <span className="hero-stat-label">数据量</span>
+          </div>
         </div>
-      )}
-    </div>
-  )
-}
-
-/* ── Portfolio Section (Professor Index) ── */
-function PortfolioSection({ data }: { data: ProfessorIndexData }) {
-  const versions = ['内地版', '全球版'].filter(v => data[v])
-  if (versions.length === 0) return null
-
-  return (
-    <section className="landing-section">
-      <div className="landing-section-header">
-        <TrendingUp className="w-4 h-4 text-emerald-400" />
-        <h2>持仓配置</h2>
-        <span className="landing-section-tag">教授指数</span>
       </div>
-      <div className="landing-portfolio-grid">
-        {versions.map((ver, vi) => {
-          const snap = data[ver]!
-          const segments = holdingsToSegments(snap)
-          const hasWeights = segments.length > 0
-          return (
-            <div
-              key={ver}
-              className="landing-card landing-portfolio-card"
-              style={{ animationDelay: `${vi * 100}ms` }}
-            >
-              <div className="landing-card-header">
-                <div className="flex items-center gap-2">
-                  {ver === '内地版' ? (
-                    <TrendingUp className="w-4 h-4 text-emerald-400" />
-                  ) : (
-                    <Globe className="w-4 h-4 text-blue-400" />
-                  )}
-                  <span className="landing-card-title">{ver}</span>
-                </div>
-                {snap.snapshot_at && (
-                  <span className="text-xs text-neutral-600">
-                    {new Date(snap.snapshot_at).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' })}
-                  </span>
-                )}
-              </div>
 
-              {snap.notes && (
-                <p className="landing-portfolio-notes">{snap.notes}</p>
-              )}
-
-              {snap.source_articles && snap.source_articles.length > 0 && (
-                <SourceArticles articles={snap.source_articles} />
-              )}
-
-              {hasWeights ? (
-                <div className="landing-donut-wrapper">
-                  <DonutChart
-                    segments={segments}
-                    size={180}
-                    strokeWidth={24}
-                    centerLabel="只标的"
-                    centerValue={String(segments.length)}
-                  />
-                </div>
-              ) : (
-                <div className="landing-holdings-plain">
-                  {snap.holdings.map((h, i) => (
-                    <div key={i} className="landing-holding-chip">
-                      <span className="landing-holding-name">{h.name}</span>
-                      {h.code && <span className="landing-holding-code">{h.code}</span>}
-                      <span className="landing-holding-market">{h.market}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )
-        })}
+      {/* Scroll indicator */}
+      <div className="hero-scroll-hint">
+        <div className="hero-scroll-mouse">
+          <div className="hero-scroll-wheel" />
+        </div>
       </div>
     </section>
   )
 }
 
 /* ── 市场动态时间线 ── */
-function TimelineSection({ items, loading }: { items: DashboardSummaryItem[]; loading: boolean }) {
+function TimelineSection({ items, loading, avatarUrl }: { items: DashboardSummaryItem[]; loading: boolean; avatarUrl?: string }) {
   if (loading) {
     return (
       <section className="landing-section">
@@ -248,12 +150,15 @@ function TimelineSection({ items, loading }: { items: DashboardSummaryItem[]; lo
               <div className="landing-timeline-line" />
               <div className="landing-card landing-insight-card">
                 <div className="landing-insight-header">
-                  <span
-                    className="landing-platform-badge"
-                    style={{ background: `${color}18`, color, border: `1px solid ${color}30` }}
-                  >
-                    {PLATFORM_ICONS[item.platform] || '?'}
-                  </span>
+                  <div className="landing-avatar-sm">
+                    {avatarUrl ? (
+                      <img src={avatarUrl} alt="" className="landing-avatar-sm-img" />
+                    ) : (
+                      <span className="landing-avatar-sm-fallback">
+                        {(PLATFORM_LABELS[item.platform] || item.platform)[0]}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className="text-xs font-medium text-neutral-400">
@@ -264,29 +169,29 @@ function TimelineSection({ items, loading }: { items: DashboardSummaryItem[]; lo
                           问答
                         </span>
                       )}
+                      <span className="text-xs text-neutral-600 ml-auto flex-shrink-0">
+                        {formatDate(item.published_at)}
+                      </span>
                     </div>
-                    {item.title && (
+                    {isQA && qaParts ? (
+                      <p className="text-sm text-neutral-200 mt-0.5 line-clamp-2">
+                        {qaParts.find(p => p.type === 'question')?.text || item.title || ''}
+                      </p>
+                    ) : item.title ? (
                       <p className="text-sm text-neutral-300 truncate mt-0.5">{item.title}</p>
-                    )}
+                    ) : null}
                   </div>
-                  <span className="text-xs text-neutral-600 flex-shrink-0 ml-2">
-                    {formatDate(item.published_at)}
-                  </span>
                 </div>
 
-                {isQA && qaParts && qaParts.length > 0 ? (
-                  <div className="landing-insight-qa">
-                    {qaParts.slice(0, 2).map((part, pi) => (
-                      <div key={pi} className="landing-insight-qa-part">
-                        <span className="text-[10px] text-neutral-500 font-medium">
-                          {part.type === 'question' ? '提问' : '回答'}
-                        </span>
-                        <div className="text-xs text-neutral-400 line-clamp-2 leading-relaxed">
-                          <RichContent content={part.text} compact />
-                        </div>
+                {isQA && qaParts ? (
+                  (() => {
+                    const answer = qaParts.find(p => p.type === 'answer')
+                    return answer ? (
+                      <div className="text-xs text-neutral-400 line-clamp-2 leading-relaxed mt-2">
+                        <RichContent content={answer.text} compact />
                       </div>
-                    ))}
-                  </div>
+                    ) : null
+                  })()
                 ) : (
                   <div className="text-xs text-neutral-400 line-clamp-2 leading-relaxed mt-2">
                     <RichContent content={item.content_preview} compact />
@@ -538,10 +443,13 @@ function ResearchAssistant({
 export default function DashboardPage() {
   const [systemTitle, setSystemTitle] = useState('财经观点问答')
   const [systemSubtitle, setSystemSubtitle] = useState('基于大V观点数据库的 RAG 问答助手')
+  const [avatarUrl, setAvatarUrl] = useState<string | undefined>()
+  const [ownerName, setOwnerName] = useState('')
+  const [stats, setStats] = useState<{ total: number; articles: number; qa: number }>()
   const [summaryItems, setSummaryItems] = useState<DashboardSummaryItem[]>([])
-  const [professorIndex, setProfessorIndex] = useState<ProfessorIndexData>({})
   const [chatRemaining, setChatRemaining] = useState(0)
   const [loadingSummary, setLoadingSummary] = useState(true)
+  const [enabledPlugins, setEnabledPlugins] = useState<PluginMeta[]>([])
 
   const { messages, sendMessage, status } = useChat({
     transport: new DefaultChatTransport({
@@ -564,6 +472,21 @@ export default function DashboardPage() {
       })
       .catch(() => {})
 
+    fetchSystemOwner()
+      .then((data) => {
+        if (data.avatar_url) setAvatarUrl(data.avatar_url)
+        if (data.owner_name) setOwnerName(data.owner_name)
+      })
+      .catch(() => {})
+
+    fetchDashboardStats()
+      .then(setStats)
+      .catch(() => {})
+
+    fetchEnabledPlugins()
+      .then((data) => setEnabledPlugins(data.plugins))
+      .catch(() => {})
+
     fetchDashboardSummary(12)
       .then((data) => {
         setSummaryItems(data.items)
@@ -571,10 +494,6 @@ export default function DashboardPage() {
       })
       .catch(() => {})
       .finally(() => setLoadingSummary(false))
-
-    fetchProfessorIndex()
-      .then(setProfessorIndex)
-      .catch(() => {})
   }, [])
 
   return (
@@ -583,30 +502,38 @@ export default function DashboardPage() {
       <nav className="landing-nav">
         <div className="landing-nav-inner">
           <div className="flex items-center gap-3">
-            <div className="landing-nav-logo">
-              <Logo className="text-emerald-400" size={18} />
-            </div>
-            <span className="text-sm font-semibold text-neutral-200 tracking-tight">
-              {systemTitle}
-            </span>
+            <Link to="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
+              <div className="landing-nav-logo">
+                <Logo className="text-emerald-400" size={18} />
+              </div>
+              <span className="text-sm font-semibold text-neutral-200 tracking-tight">
+                {systemTitle}
+              </span>
+            </Link>
           </div>
-          <div className="flex items-center gap-2 text-xs text-neutral-500">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-            实时
+          <div className="flex items-center gap-1">
+            {enabledPlugins.map((plugin) => (
+              <Link
+                key={plugin.id}
+                to={`/p/${plugin.id}`}
+                className="px-3 py-1.5 rounded-lg text-xs text-neutral-400 hover:text-neutral-200 hover:bg-white/5 transition-all"
+              >
+                {plugin.name}
+              </Link>
+            ))}
+            <div className="ml-2 flex items-center gap-2 text-xs text-neutral-500">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
+              实时
+            </div>
           </div>
         </div>
       </nav>
 
       {/* ── Hero ── */}
-      <HeroSection title={systemTitle} subtitle={systemSubtitle} />
-
-      {/* ── Portfolio ── */}
-      {Object.keys(professorIndex).length > 0 && (
-        <PortfolioSection data={professorIndex} />
-      )}
+      <HeroSection title={systemTitle} subtitle={systemSubtitle} avatarUrl={avatarUrl} ownerName={ownerName} stats={stats} />
 
       {/* ── 市场动态 ── */}
-      <TimelineSection items={summaryItems} loading={loadingSummary} />
+      <TimelineSection items={summaryItems} loading={loadingSummary} avatarUrl={avatarUrl} />
 
       {/* ── AI Assistant ── */}
       <ResearchAssistant

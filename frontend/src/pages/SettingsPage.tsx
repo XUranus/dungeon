@@ -1,14 +1,20 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { Loader2, Check, Settings, Database, Bot, Activity, Sparkles, Wrench, Key, Globe, TrendingUp, BarChart3, Copy, RefreshCw } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import {
+  Loader2, Check, Settings, Database, Bot, Sparkles, Wrench, Key, Globe,
+  TrendingUp, BarChart3, Copy, RefreshCw, Puzzle, ChevronRight, Clock,
+  AlertCircle, FileText, AlertTriangle,
+} from 'lucide-react'
 import {
   fetchCrawlInterval, updateCrawlInterval, type CrawlIntervalResponse,
   fetchSystemInfo, updateSystemInfo, type SystemInfo,
+  updateSystemAvatar, uploadSystemAvatar,
+  fetchSystemOwner, updateSystemOwnerName,
   fetchToolsSettings, updateToolsSettings, type ToolsSettings,
   fetchLogLevel, updateLogLevel,
-  startProfessorIndexParse, fetchProfessorIndexParseStatus, fetchProfessorIndexParseHistory,
-  fetchProfessorIndexInterval, updateProfessorIndexInterval,
   fetchApiKeyInfo, refreshApiKey, type KeyInfoResponse,
-  type ParseTask,
+  fetchAdminPlugins, updateEnabledPlugins, type AdminPluginItem,
+  fetchPluginConfig, updatePluginConfig, fetchPluginEventLog,
+  type PluginConfigData, type PluginEventLogEntry,
 } from '../services/api'
 
 const INTERVAL_OPTIONS = [
@@ -18,28 +24,14 @@ const INTERVAL_OPTIONS = [
   { value: 60, label: '每 1 小时' },
 ]
 
-const PI_INTERVAL_OPTIONS = [
-  { value: 1, label: '每 1 天' },
-  { value: 7, label: '每 7 天' },
-  { value: 15, label: '每 15 天' },
-  { value: 30, label: '每 30 天' },
-]
-
 const LOG_LEVELS = ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']
-
-const STATUS_LABELS: Record<string, string> = {
-  pending: '等待中',
-  running: '运行中',
-  done: '已完成',
-  error: '失败',
-}
 
 const TABS = [
   { key: 'basic', label: '基础', icon: Settings },
   { key: 'crawl', label: '采集', icon: Database },
   { key: 'tools', label: '工具', icon: Bot },
   { key: 'api', label: 'API', icon: Key },
-  { key: 'holdings', label: '持仓', icon: Activity },
+  { key: 'plugins', label: '插件', icon: Puzzle },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']
@@ -51,6 +43,17 @@ export default function SettingsPage() {
   const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
   const [sysSaving, setSysSaving] = useState(false)
   const [sysSaved, setSysSaved] = useState(false)
+
+  // ---- Avatar & Owner ----
+  const [ownerName, setOwnerName] = useState('')
+  const [ownerNameSaving, setOwnerNameSaving] = useState(false)
+  const [ownerNameSaved, setOwnerNameSaved] = useState(false)
+  const [avatarUrl, setAvatarUrl] = useState('')
+  const [avatarSaving, setAvatarSaving] = useState(false)
+  const [avatarSaved, setAvatarSaved] = useState(false)
+  const [avatarUploading, setAvatarUploading] = useState(false)
+  const [avatarError, setAvatarError] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // ---- Crawl interval ----
   const [crawlInterval, setCrawlInterval] = useState<CrawlIntervalResponse | null>(null)
@@ -75,67 +78,30 @@ export default function SettingsPage() {
   const [keyNew, setKeyNew] = useState<string | null>(null)
   const [keyCopied, setKeyCopied] = useState(false)
 
-  // ---- Professor Index ----
-  const [piInterval, setPiInterval] = useState(7)
-  const [piIntervalSaving, setPiIntervalSaving] = useState(false)
-  const [piIntervalSaved, setPiIntervalSaved] = useState(false)
-  const [piParsing, setPiParsing] = useState(false)
-  const [piStatus, setPiStatus] = useState<ParseTask | null>(null)
-  const [piHistory, setPiHistory] = useState<ParseTask[]>([])
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  const loadPiHistory = useCallback(async () => {
-    try {
-      const history = await fetchProfessorIndexParseHistory()
-      setPiHistory(history)
-    } catch { /* ignore */ }
-  }, [])
-
-  const loadPiStatus = useCallback(async () => {
-    try {
-      const s = await fetchProfessorIndexParseStatus()
-      if ('status' in s && s.status !== 'idle') {
-        setPiStatus(s as ParseTask)
-        return s as ParseTask
-      }
-      setPiStatus(null)
-      return null
-    } catch { return null }
-  }, [])
-
-  // 轮询状态
-  const startPolling = useCallback(() => {
-    if (pollRef.current) return
-    pollRef.current = setInterval(async () => {
-      const s = await loadPiStatus()
-      if (s && s.status !== 'pending' && s.status !== 'running') {
-        stopPolling()
-        setPiParsing(false)
-        loadPiHistory()
-      }
-    }, 3000)
-  }, [loadPiStatus, loadPiHistory])
-
-  const stopPolling = useCallback(() => {
-    if (pollRef.current) {
-      clearInterval(pollRef.current)
-      pollRef.current = null
-    }
-  }, [])
+  // ---- Plugins ----
+  const [plugins, setPlugins] = useState<AdminPluginItem[]>([])
+  const [pluginsSaving, setPluginsSaving] = useState(false)
+  const [pluginsSaved, setPluginsSaved] = useState(false)
+  const [expandedPlugin, setExpandedPlugin] = useState<string | null>(null)
+  const [pluginConfig, setPluginConfig] = useState<PluginConfigData | null>(null)
+  const [pluginConfigJson, setPluginConfigJson] = useState('')
+  const [configSaving, setConfigSaving] = useState(false)
+  const [configSaved, setConfigSaved] = useState(false)
+  const [configError, setConfigError] = useState('')
+  const [eventLog, setEventLog] = useState<PluginEventLogEntry[]>([])
+  const [eventLogLoading, setEventLogLoading] = useState(false)
 
   useEffect(() => {
     Promise.all([
       fetchSystemInfo().then(setSysInfo),
+      fetchSystemOwner().then((res) => { setOwnerName(res.owner_name); setAvatarUrl(res.avatar_url) }),
       fetchCrawlInterval().then(setCrawlInterval),
       fetchToolsSettings().then(setToolsSettings),
       fetchLogLevel().then((res) => setLogLevel(res.level)),
       fetchApiKeyInfo().then(setKeyInfo),
-      fetchProfessorIndexInterval().then((res) => setPiInterval(res.interval_days)),
-      loadPiStatus(),
-      loadPiHistory(),
+      fetchAdminPlugins().then((res) => setPlugins(res.plugins)).catch(() => {}),
     ]).finally(() => { setLoading(false) })
-    return () => { stopPolling() }
-  }, [loadPiStatus, loadPiHistory, stopPolling])
+  }, [])
 
   // ── Handlers ──
 
@@ -149,6 +115,46 @@ export default function SettingsPage() {
       setSysSaved(true)
       setTimeout(() => setSysSaved(false), 2000)
     } catch { /* ignore */ } finally { setSysSaving(false) }
+  }
+
+  const handleOwnerNameSave = async () => {
+    setOwnerNameSaving(true)
+    setOwnerNameSaved(false)
+    try {
+      await updateSystemOwnerName(ownerName)
+      setOwnerNameSaved(true)
+      setTimeout(() => setOwnerNameSaved(false), 2000)
+    } catch { /* ignore */ } finally { setOwnerNameSaving(false) }
+  }
+
+  const handleAvatarSave = async () => {
+    setAvatarSaving(true)
+    setAvatarSaved(false)
+    try {
+      const res = await updateSystemAvatar(avatarUrl)
+      setAvatarUrl(res.avatar_url)
+      setAvatarSaved(true)
+      setTimeout(() => setAvatarSaved(false), 2000)
+    } catch { /* ignore */ } finally { setAvatarSaving(false) }
+  }
+
+  const handleAvatarUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    setAvatarUploading(true)
+    setAvatarError('')
+    try {
+      const res = await uploadSystemAvatar(file)
+      setAvatarUrl(res.avatar_url)
+      setAvatarSaved(true)
+      setTimeout(() => setAvatarSaved(false), 2000)
+    } catch (err) {
+      setAvatarError(err instanceof Error ? err.message : '上传失败')
+      setTimeout(() => setAvatarError(''), 3000)
+    } finally {
+      setAvatarUploading(false)
+      if (fileInputRef.current) fileInputRef.current.value = ''
+    }
   }
 
   const handleIntervalChange = async (minutes: number) => {
@@ -198,33 +204,6 @@ export default function SettingsPage() {
     } catch { /* ignore */ } finally { setLogSaving(false) }
   }
 
-  const handlePiIntervalChange = async (days: number) => {
-    setPiIntervalSaving(true)
-    setPiIntervalSaved(false)
-    try {
-      const res = await updateProfessorIndexInterval(days)
-      setPiInterval(res.interval_days)
-      setPiIntervalSaved(true)
-      setTimeout(() => setPiIntervalSaved(false), 2000)
-    } catch { /* ignore */ } finally { setPiIntervalSaving(false) }
-  }
-
-  const handleParseProfessorIndex = async () => {
-    setPiParsing(true)
-    try {
-      await startProfessorIndexParse()
-      startPolling()
-    } catch (e) {
-      const msg = (e as Error)?.message || ''
-      if (msg.includes('409')) {
-        // 已有任务在运行，开始轮询
-        startPolling()
-      } else {
-        setPiParsing(false)
-      }
-    }
-  }
-
   const handleKeyRefresh = async () => {
     if (!confirm('刷新后旧 Key 立即失效，确定继续？')) return
     setKeyRefreshing(true)
@@ -249,6 +228,60 @@ export default function SettingsPage() {
     if (!token) return ''
     if (token.length <= 32) return token
     return token.slice(0, 16) + ' ··· ' + token.slice(-12)
+  }
+
+  const handlePluginToggle = async (pluginId: string) => {
+    const updated = plugins.map(p =>
+      p.id === pluginId ? { ...p, enabled: !p.enabled } : p
+    )
+    setPlugins(updated)
+    setPluginsSaving(true)
+    setPluginsSaved(false)
+    try {
+      const enabledIds = updated.filter(p => p.enabled).map(p => p.id)
+      await updateEnabledPlugins(enabledIds)
+      setPluginsSaved(true)
+      setTimeout(() => setPluginsSaved(false), 2000)
+    } catch { /* ignore */ } finally { setPluginsSaving(false) }
+  }
+
+  const handlePluginExpand = async (pluginId: string) => {
+    if (expandedPlugin === pluginId) {
+      setExpandedPlugin(null)
+      return
+    }
+    setExpandedPlugin(pluginId)
+    setConfigError('')
+    try {
+      const data = await fetchPluginConfig(pluginId)
+      setPluginConfig(data)
+      setPluginConfigJson(JSON.stringify(data.config, null, 2))
+    } catch { /* ignore */ }
+    setEventLogLoading(true)
+    try {
+      const logs = await fetchPluginEventLog({ plugin_id: pluginId, limit: 50 })
+      setEventLog(logs)
+    } catch { /* ignore */ } finally { setEventLogLoading(false) }
+  }
+
+  const handleConfigSave = async () => {
+    if (!expandedPlugin) return
+    setConfigError('')
+    try {
+      const parsed = JSON.parse(pluginConfigJson)
+      setConfigSaving(true)
+      const data = await updatePluginConfig(expandedPlugin, parsed)
+      setPluginConfig(data)
+      setPluginConfigJson(JSON.stringify(data.config, null, 2))
+      setConfigSaved(true)
+      setTimeout(() => setConfigSaved(false), 2000)
+    } catch (e) {
+      if (e instanceof SyntaxError) {
+        setConfigError('JSON 格式错误')
+      } else {
+        setConfigError((e as Error).message || '保存失败')
+      }
+    } finally { setConfigSaving(false) }
   }
 
   // ── Tab Content ──
@@ -307,6 +340,110 @@ export default function SettingsPage() {
             </div>
           </>
         )}
+      </section>
+
+      {/* 星主信息 */}
+      <section className="glass-card dark:glass-card-dark rounded-xl p-5">
+        <h2 className="text-lg font-medium mb-1 text-neutral-800 dark:text-neutral-200">星主信息</h2>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-4">
+          设置公共大屏 Hero 区域显示的星主名称和头像
+        </p>
+
+        {/* 星主名称 */}
+        <div className="mb-5">
+          <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">星主名称</label>
+          <div className="flex items-center gap-3">
+            <input
+              value={ownerName}
+              onChange={(e) => setOwnerName(e.target.value)}
+              maxLength={50}
+              className="flex-1 bg-neutral-100 dark:bg-neutral-800 rounded-xl px-4 py-2.5 text-sm text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-600 border border-neutral-200 dark:border-neutral-700"
+              placeholder="例如：半佛仙人、E 大"
+            />
+            <button
+              onClick={handleOwnerNameSave}
+              disabled={ownerNameSaving}
+              className="bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-xl px-4 py-2.5 text-sm hover:bg-neutral-800 dark:hover:bg-neutral-100 disabled:opacity-50 transition-all flex items-center gap-1.5 flex-shrink-0"
+            >
+              {ownerNameSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+              保存
+            </button>
+            {ownerNameSaved && (
+              <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1 flex-shrink-0">
+                <Check className="w-3 h-3" /> 已保存
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* 头像 */}
+        <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">星主头像</label>
+        <div className="flex items-start gap-4">
+          <div className="w-16 h-16 rounded-full overflow-hidden bg-neutral-200 dark:bg-neutral-700 flex-shrink-0 border-2 border-neutral-300 dark:border-neutral-600">
+            {avatarUrl ? (
+              <img src={avatarUrl} alt="头像预览" className="w-full h-full object-cover" />
+            ) : (
+              <div className="w-full h-full flex items-center justify-center text-neutral-400">
+                <Sparkles className="w-6 h-6" />
+              </div>
+            )}
+          </div>
+          <div className="flex-1 space-y-3">
+            {/* 上传按钮 */}
+            <div className="flex items-center gap-3">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml"
+                onChange={handleAvatarUpload}
+                className="hidden"
+              />
+              <button
+                onClick={() => fileInputRef.current?.click()}
+                disabled={avatarUploading}
+                className="bg-neutral-100 dark:bg-neutral-800 text-neutral-700 dark:text-neutral-300 rounded-xl px-4 py-2 text-sm hover:bg-neutral-200 dark:hover:bg-neutral-700 disabled:opacity-50 transition-all flex items-center gap-1.5 border border-neutral-200 dark:border-neutral-700"
+              >
+                {avatarUploading ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                )}
+                {avatarUploading ? '上传中...' : '上传图片'}
+              </button>
+              <span className="text-[11px] text-neutral-400">JPG / PNG / GIF / WebP / SVG，最大 5MB</span>
+            </div>
+
+            {/* URL 输入 */}
+            <input
+              value={avatarUrl}
+              onChange={(e) => setAvatarUrl(e.target.value)}
+              maxLength={500}
+              className="w-full bg-neutral-100 dark:bg-neutral-800 rounded-xl px-4 py-2.5 text-sm text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-600 border border-neutral-200 dark:border-neutral-700"
+              placeholder="或直接填写图片 URL: https://example.com/avatar.jpg"
+            />
+
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleAvatarSave}
+                disabled={avatarSaving}
+                className="bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-xl px-4 py-2 text-sm hover:bg-neutral-800 dark:hover:bg-neutral-100 disabled:opacity-50 transition-all flex items-center gap-1.5"
+              >
+                {avatarSaving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Check className="w-3.5 h-3.5" />}
+                保存 URL
+              </button>
+              {avatarSaved && (
+                <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
+                  <Check className="w-3 h-3" /> 已保存
+                </span>
+              )}
+              {avatarError && (
+                <span className="text-xs text-red-500 dark:text-red-400">{avatarError}</span>
+              )}
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* 日志级别 */}
@@ -519,147 +656,6 @@ export default function SettingsPage() {
     </div>
   )
 
-  const isRunning = piStatus && (piStatus.status === 'pending' || piStatus.status === 'running')
-
-  const renderHoldings = () => (
-    <div className="space-y-6">
-      <section className="glass-card dark:glass-card-dark rounded-xl p-5">
-        <h2 className="text-lg font-medium mb-1 text-neutral-800 dark:text-neutral-200 flex items-center gap-2">
-          <Sparkles className="w-5 h-5 text-neutral-400" />
-          教授指数解析
-        </h2>
-        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-4">
-          从历史文章中提取"教授指数"的持仓配置（内地版/全球版），解析后展示在公共主页。
-        </p>
-
-        {/* 间隔配置 */}
-        <div className="mb-4">
-          <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-2">自动解析间隔</label>
-          <div className="grid grid-cols-4 gap-2">
-            {PI_INTERVAL_OPTIONS.map((opt) => {
-              const isActive = piInterval === opt.value
-              return (
-                <button
-                  key={opt.value}
-                  onClick={() => handlePiIntervalChange(opt.value)}
-                  disabled={piIntervalSaving}
-                  className={`relative px-3 py-2.5 rounded-xl text-sm font-medium transition-all ${
-                    isActive
-                      ? 'bg-neutral-900 dark:bg-white text-white dark:text-neutral-900'
-                      : 'bg-neutral-100 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-400 hover:bg-neutral-200 dark:hover:bg-neutral-700'
-                  } disabled:opacity-50`}
-                >
-                  {opt.label}
-                  {isActive && <Check className="w-3 h-3 absolute top-1 right-1 opacity-60" />}
-                </button>
-              )
-            })}
-          </div>
-          <div className="mt-2 h-5">
-            {piIntervalSaving && (
-              <span className="text-xs text-neutral-400 flex items-center gap-1">
-                <Loader2 className="w-3 h-3 animate-spin" /> 保存中...
-              </span>
-            )}
-            {piIntervalSaved && (
-              <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
-                <Check className="w-3 h-3" /> 已保存
-              </span>
-            )}
-          </div>
-        </div>
-
-        {/* 手动触发 */}
-        <div className="flex items-center gap-3">
-          <button
-            onClick={handleParseProfessorIndex}
-            disabled={!!isRunning || piParsing}
-            className="bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-xl px-4 py-2.5 text-sm hover:bg-neutral-800 dark:hover:bg-neutral-100 disabled:opacity-50 transition-all flex items-center gap-1.5"
-          >
-            {(isRunning || piParsing) ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-            {isRunning ? '解析中...' : '手动触发解析'}
-          </button>
-          {isRunning && (
-            <span className="text-xs text-neutral-500 dark:text-neutral-400">
-              任务正在后台运行，请稍候...
-            </span>
-          )}
-          {piStatus && piStatus.status === 'done' && (
-            <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
-              <Check className="w-3 h-3" />
-              {piStatus.message || `完成: 内地版${piStatus.china_count}项, 全球版${piStatus.global_count}项`}
-            </span>
-          )}
-          {piStatus && piStatus.status === 'error' && (
-            <span className="text-xs text-red-500 dark:text-red-400">
-              失败: {piStatus.error_message || '未知错误'}
-            </span>
-          )}
-        </div>
-
-        <p className="text-xs text-neutral-400 dark:text-neutral-500 mt-3">
-          点击后将自动抓取最新专栏文章，再由 AI 分析所有历史文章提取持仓配置。
-        </p>
-      </section>
-
-      {/* 历史记录 */}
-      <section className="glass-card dark:glass-card-dark rounded-xl p-5">
-        <h2 className="text-sm font-medium mb-3 text-neutral-800 dark:text-neutral-200">解析历史</h2>
-        {piHistory.length === 0 ? (
-          <p className="text-xs text-neutral-400 dark:text-neutral-500">暂无解析记录</p>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="border-b border-neutral-200 dark:border-neutral-700">
-                  <th className="text-left py-2 pr-3 font-medium text-neutral-500 dark:text-neutral-400">#</th>
-                  <th className="text-left py-2 pr-3 font-medium text-neutral-500 dark:text-neutral-400">触发</th>
-                  <th className="text-left py-2 pr-3 font-medium text-neutral-500 dark:text-neutral-400">状态</th>
-                  <th className="text-right py-2 pr-3 font-medium text-neutral-500 dark:text-neutral-400">文章</th>
-                  <th className="text-right py-2 pr-3 font-medium text-neutral-500 dark:text-neutral-400">内地版</th>
-                  <th className="text-right py-2 pr-3 font-medium text-neutral-500 dark:text-neutral-400">全球版</th>
-                  <th className="text-left py-2 font-medium text-neutral-500 dark:text-neutral-400">时间</th>
-                </tr>
-              </thead>
-              <tbody>
-                {piHistory.map((t) => (
-                  <tr key={t.id} className="border-b border-neutral-100 dark:border-neutral-800 last:border-0">
-                    <td className="py-2 pr-3 text-neutral-500 dark:text-neutral-400">{t.id}</td>
-                    <td className="py-2 pr-3">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${
-                        t.triggered_by === 'schedule'
-                          ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                          : 'bg-neutral-100 text-neutral-600 dark:bg-neutral-700 dark:text-neutral-300'
-                      }`}>
-                        {t.triggered_by === 'schedule' ? '定时' : '手动'}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-3">
-                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${
-                        t.status === 'done' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                        : t.status === 'error' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
-                        : t.status === 'running' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
-                        : 'bg-neutral-100 text-neutral-500 dark:bg-neutral-700 dark:text-neutral-400'
-                      }`}>
-                        {STATUS_LABELS[t.status] || t.status}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-3 text-right text-neutral-600 dark:text-neutral-300">{t.articles_fetched || '-'}</td>
-                    <td className="py-2 pr-3 text-right text-neutral-600 dark:text-neutral-300">{t.china_count || '-'}</td>
-                    <td className="py-2 pr-3 text-right text-neutral-600 dark:text-neutral-300">{t.global_count || '-'}</td>
-                    <td className="py-2 text-neutral-400 dark:text-neutral-500 whitespace-nowrap">
-                      {t.started_at ? new Date(t.started_at).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '-'}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
-    </div>
-  )
-
   const renderApi = () => {
     const displayValue = keyNew || (keyInfo?.api_key_set ? keyInfo.api_key_preview : '')
     return (
@@ -717,7 +713,8 @@ export default function SettingsPage() {
               {/* 新 Key 提示 */}
               {keyNew && (
                 <div className="flex items-center gap-2 text-[11px] text-amber-600 dark:text-amber-400">
-                  <span>⚠️ 新 Key 已生成，旧 Key 已失效。请立即复制保存。</span>
+                  <AlertTriangle size={14} className="flex-shrink-0" />
+                  <span>新 Key 已生成，旧 Key 已失效。请立即复制保存。</span>
                 </div>
               )}
 
@@ -770,12 +767,219 @@ export default function SettingsPage() {
     )
   }
 
+  const renderPlugins = () => (
+    <div className="space-y-6">
+      <section className="glass-card dark:glass-card-dark rounded-xl p-5">
+        <h2 className="text-lg font-medium mb-1 text-neutral-800 dark:text-neutral-200 flex items-center gap-2">
+          <Puzzle className="w-5 h-5" />
+          插件管理
+        </h2>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-4">
+          管理公共页面插件。点击插件可展开配置编辑器和事件日志。
+        </p>
+
+        {loading ? (
+          <div className="flex items-center gap-2 text-neutral-400">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="text-sm">加载中...</span>
+          </div>
+        ) : plugins.length === 0 ? (
+          <p className="text-xs text-neutral-400 dark:text-neutral-500">暂无已注册的插件</p>
+        ) : (
+          <div className="space-y-2">
+            {plugins.map((plugin) => {
+              const isExpanded = expandedPlugin === plugin.id
+              return (
+                <div key={plugin.id} className="rounded-lg border border-neutral-200 dark:border-neutral-700 overflow-hidden">
+                  {/* Plugin header row */}
+                  <button
+                    onClick={() => handlePluginExpand(plugin.id)}
+                    className="w-full flex items-center justify-between p-4 bg-neutral-50 dark:bg-neutral-800/50 hover:bg-neutral-100 dark:hover:bg-neutral-800 transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-3 flex-1 min-w-0">
+                      <ChevronRight className={`w-4 h-4 text-neutral-400 transition-transform flex-shrink-0 ${isExpanded ? 'rotate-90' : ''}`} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-neutral-800 dark:text-neutral-200">{plugin.name}</span>
+                          <code className="text-[10px] px-1.5 py-0.5 rounded bg-neutral-200 dark:bg-neutral-700 text-neutral-500 dark:text-neutral-400 font-mono">{plugin.id}</code>
+                          {plugin.has_hooks && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400">有钩子</span>
+                          )}
+                          {plugin.has_config && (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400">可配置</span>
+                          )}
+                        </div>
+                        <p className="text-xs text-neutral-500 dark:text-neutral-400 mt-0.5 truncate">{plugin.description}</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={(e) => { e.stopPropagation(); handlePluginToggle(plugin.id) }}
+                      disabled={pluginsSaving}
+                      className={`relative w-11 h-6 rounded-full transition-colors flex-shrink-0 ml-3 ${
+                        plugin.enabled ? 'bg-green-600' : 'bg-neutral-300 dark:bg-neutral-600'
+                      }`}
+                    >
+                      <div className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform ${
+                        plugin.enabled ? 'translate-x-5' : 'translate-x-0.5'
+                      }`} />
+                    </button>
+                  </button>
+
+                  {/* Expanded: Config + Event Log */}
+                  {isExpanded && (
+                    <div className="border-t border-neutral-200 dark:border-neutral-700 p-4 space-y-5 bg-white dark:bg-neutral-900/50">
+                      {/* Config Editor */}
+                      <div>
+                        <div className="flex items-center justify-between mb-2">
+                          <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5">
+                            <FileText className="w-3.5 h-3.5" />
+                            配置 (JSON)
+                          </label>
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => {
+                                if (pluginConfig) {
+                                  setPluginConfigJson(JSON.stringify(pluginConfig.defaults, null, 2))
+                                }
+                              }}
+                              className="text-[11px] text-neutral-500 hover:text-neutral-700 dark:hover:text-neutral-300 transition-colors"
+                            >
+                              恢复默认值
+                            </button>
+                            <button
+                              onClick={handleConfigSave}
+                              disabled={configSaving}
+                              className="bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-lg px-3 py-1.5 text-xs hover:bg-neutral-800 dark:hover:bg-neutral-100 disabled:opacity-50 transition-all flex items-center gap-1"
+                            >
+                              {configSaving ? <Loader2 className="w-3 h-3 animate-spin" /> : <Check className="w-3 h-3" />}
+                              保存
+                            </button>
+                          </div>
+                        </div>
+                        <textarea
+                          value={pluginConfigJson}
+                          onChange={(e) => { setPluginConfigJson(e.target.value); setConfigError('') }}
+                          rows={8}
+                          spellCheck={false}
+                          className="w-full font-mono text-xs bg-neutral-900 dark:bg-neutral-950 text-green-400 rounded-lg p-3 border border-neutral-700 focus:outline-none focus:ring-1 focus:ring-neutral-600 resize-y"
+                          placeholder="{}"
+                        />
+                        <div className="flex items-center gap-2 h-5 mt-1">
+                          {configError && (
+                            <span className="text-xs text-red-500 flex items-center gap-1">
+                              <AlertCircle className="w-3 h-3" /> {configError}
+                            </span>
+                          )}
+                          {configSaved && (
+                            <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
+                              <Check className="w-3 h-3" /> 配置已保存
+                            </span>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Event Log */}
+                      <div>
+                        <label className="text-sm font-medium text-neutral-700 dark:text-neutral-300 flex items-center gap-1.5 mb-2">
+                          <Clock className="w-3.5 h-3.5" />
+                          事件日志
+                        </label>
+                        {eventLogLoading ? (
+                          <div className="flex items-center gap-2 text-neutral-400 py-4">
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            <span className="text-xs">加载中...</span>
+                          </div>
+                        ) : eventLog.length === 0 ? (
+                          <p className="text-xs text-neutral-500 dark:text-neutral-400 py-4">暂无事件记录</p>
+                        ) : (
+                          <div className="overflow-x-auto rounded-lg border border-neutral-200 dark:border-neutral-700">
+                            <table className="w-full text-xs">
+                              <thead>
+                                <tr className="bg-neutral-50 dark:bg-neutral-800">
+                                  <th className="text-left py-2 px-3 font-medium text-neutral-500 dark:text-neutral-400">事件</th>
+                                  <th className="text-left py-2 px-3 font-medium text-neutral-500 dark:text-neutral-400">状态</th>
+                                  <th className="text-left py-2 px-3 font-medium text-neutral-500 dark:text-neutral-400">消息</th>
+                                  <th className="text-right py-2 px-3 font-medium text-neutral-500 dark:text-neutral-400">耗时</th>
+                                  <th className="text-right py-2 px-3 font-medium text-neutral-500 dark:text-neutral-400">时间</th>
+                                </tr>
+                              </thead>
+                              <tbody>
+                                {eventLog.map((entry, i) => (
+                                  <tr key={i} className="border-t border-neutral-100 dark:border-neutral-800">
+                                    <td className="py-2 px-3 font-mono text-neutral-700 dark:text-neutral-300">{entry.event}</td>
+                                    <td className="py-2 px-3">
+                                      <span className={`px-1.5 py-0.5 rounded text-[10px] ${
+                                        entry.status === 'ok' ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                                        : entry.status === 'error' ? 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'
+                                        : 'bg-neutral-100 text-neutral-500 dark:bg-neutral-700 dark:text-neutral-400'
+                                      }`}>
+                                        {entry.status}
+                                      </span>
+                                    </td>
+                                    <td className="py-2 px-3 text-neutral-500 dark:text-neutral-400 max-w-[200px] truncate">{entry.message || '-'}</td>
+                                    <td className="py-2 px-3 text-right text-neutral-500 dark:text-neutral-400">{entry.duration_ms}ms</td>
+                                    <td className="py-2 px-3 text-right text-neutral-400 dark:text-neutral-500 whitespace-nowrap">
+                                      {new Date(entry.timestamp * 1000).toLocaleString('zh-CN', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Plugin path info */}
+                      <p className="text-[10px] text-neutral-400 dark:text-neutral-500">
+                        访问路径: <code className="font-mono">/p/{plugin.id}</code> &middot;
+                        数据目录: <code className="font-mono">data/plugins/{plugin.id}/</code> &middot;
+                        配置文件: <code className="font-mono">data/plugins/{plugin.id}/config.json</code>
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        <div className="mt-3 flex items-center gap-2 h-5">
+          {pluginsSaving && (
+            <span className="text-xs text-neutral-400 flex items-center gap-1">
+              <Loader2 className="w-3 h-3 animate-spin" /> 保存中...
+            </span>
+          )}
+          {pluginsSaved && (
+            <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
+              <Check className="w-3 h-3" /> 已保存
+            </span>
+          )}
+        </div>
+      </section>
+
+      {/* Architecture info */}
+      <section className="glass-card dark:glass-card-dark rounded-xl p-5">
+        <h2 className="text-sm font-medium mb-2 text-neutral-800 dark:text-neutral-200">插件架构</h2>
+        <div className="text-xs text-neutral-500 dark:text-neutral-400 space-y-1.5">
+          <p>插件系统采用自动发现机制，支持完整的运行时管理：</p>
+          <ul className="list-disc list-inside ml-2 space-y-1">
+            <li><strong>数据访问</strong> — 插件可调用主系统全部公开 API</li>
+            <li><strong>独立存储</strong> — 每个插件有独立数据目录 <code className="font-mono bg-neutral-100 dark:bg-neutral-800 px-1 rounded">data/plugins/&lt;id&gt;/</code></li>
+            <li><strong>事件钩子</strong> — 插件可 hook 主系统事件（如 crawl_completed、topic_created）</li>
+            <li><strong>JSON 配置</strong> — 每个插件有独立 JSON 配置，可在上方编辑</li>
+            <li><strong>事件日志</strong> — 插件执行记录可在上方查看</li>
+          </ul>
+        </div>
+      </section>
+    </div>
+  )
+
   const tabContent: Record<TabKey, () => React.JSX.Element> = {
     basic: renderBasic,
     crawl: renderCrawl,
     tools: renderTools,
     api: renderApi,
-    holdings: renderHoldings,
+    plugins: renderPlugins,
   }
 
   return (

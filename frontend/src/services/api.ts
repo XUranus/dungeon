@@ -101,6 +101,9 @@ export const fetchDashboardSummary = (limit: number = 20) =>
 export const fetchChatRemaining = () =>
   request<{ used: number; limit: number; remaining: number }>('/dashboard/chat-remaining')
 
+export const fetchDashboardStats = () =>
+  request<{ total: number; articles: number; qa: number }>('/dashboard/stats')
+
 // ---- Holdings (public) ----
 export interface RecommendedHolding {
   id: number
@@ -131,12 +134,14 @@ export const fetchTopics = (params: {
   platform?: string
   content_type?: string
   search?: string
+  date_from?: string
+  date_to?: string
   page?: number
   page_size?: number
 } = {}) => {
   const sp = new URLSearchParams()
   Object.entries(params).forEach(([k, v]) => {
-    if (v !== undefined && v !== null) sp.set(k, String(v))
+    if (v !== undefined && v !== null && v !== '') sp.set(k, String(v))
   })
   return request<PaginatedResponse<Topic>>(`/topics?${sp}`)
 }
@@ -220,6 +225,51 @@ export const updateSystemInfo = (data: SystemInfo) =>
 export interface ToolsSettings {
   enable_tools: boolean
   tavily_api_key_set: boolean
+}
+
+// ---- System Avatar & Owner (public) ----
+export interface SystemAvatarResponse {
+  avatar_url: string
+}
+
+export interface SystemOwnerResponse {
+  owner_name: string
+  avatar_url: string
+}
+
+export const fetchSystemAvatar = () =>
+  request<SystemAvatarResponse>('/settings/system-avatar')
+
+export const fetchSystemOwner = () =>
+  request<SystemOwnerResponse>('/settings/system-owner')
+
+export const updateSystemOwnerName = (owner_name: string) =>
+  request<{ owner_name: string }>('/settings/system-owner-name', {
+    method: 'PUT',
+    body: JSON.stringify({ owner_name }),
+  })
+
+export const updateSystemAvatar = (avatar_url: string) =>
+  request<SystemAvatarResponse>('/settings/system-avatar', {
+    method: 'PUT',
+    body: JSON.stringify({ avatar_url }),
+  })
+
+export const uploadSystemAvatar = async (file: File): Promise<SystemAvatarResponse> => {
+  const formData = new FormData()
+  formData.append('file', file)
+  const headers: Record<string, string> = {}
+  if (_token) headers['Authorization'] = `Bearer ${_token}`
+  const res = await fetch(`${BASE}/settings/system-avatar/upload`, {
+    method: 'POST',
+    headers,
+    body: formData,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(err.detail || 'Upload failed')
+  }
+  return res.json()
 }
 
 export const fetchToolsSettings = () =>
@@ -309,3 +359,98 @@ export const updateProfessorIndexInterval = (interval_days: number) =>
     method: 'PUT',
     body: JSON.stringify({ interval_days }),
   })
+
+// ---- Public Plugins ----
+
+export interface PluginMeta {
+  id: string
+  name: string
+  icon: string
+  description: string
+  order: number
+}
+
+/** 公开：获取已启用的插件列表（无需登录） */
+export const fetchEnabledPlugins = () =>
+  request<{ plugins: PluginMeta[] }>('/dashboard/plugins')
+
+/** 管理员：获取所有插件（含启用状态） */
+export interface AdminPluginItem extends PluginMeta {
+  enabled: boolean
+  has_config?: boolean
+  has_hooks?: boolean
+}
+
+export const fetchAdminPlugins = () =>
+  request<{ plugins: AdminPluginItem[] }>('/settings/public-plugins')
+
+/** 管理员：更新启用的插件列表 */
+export const updateEnabledPlugins = (enabled_ids: string[]) =>
+  request<{ enabled_ids: string[] }>('/settings/public-plugins', {
+    method: 'PUT',
+    body: JSON.stringify({ enabled_ids }),
+  })
+
+// ---- Plugin Runtime ----
+
+export interface PluginRuntimeItem {
+  id: string
+  name: string
+  icon: string
+  description: string
+  order: number
+  enabled: boolean
+  has_config: boolean
+  has_hooks: boolean
+}
+
+export interface PluginConfigData {
+  plugin_id: string
+  config: Record<string, unknown>
+  defaults: Record<string, unknown>
+}
+
+export interface PluginEventLogEntry {
+  event: string
+  plugin_id: string
+  status: 'ok' | 'error' | 'skipped'
+  message: string
+  duration_ms: number
+  timestamp: number
+}
+
+/** Admin: list all plugins with runtime info */
+export const fetchPluginRuntimeList = () =>
+  request<PluginRuntimeItem[]>('/plugins/')
+
+/** Admin: get plugin config */
+export const fetchPluginConfig = (pluginId: string) =>
+  request<PluginConfigData>(`/plugins/config/${pluginId}`)
+
+/** Admin: update plugin config (merge-patch) */
+export const updatePluginConfig = (pluginId: string, config: Record<string, unknown>) =>
+  request<PluginConfigData>(`/plugins/config/${pluginId}`, {
+    method: 'PUT',
+    body: JSON.stringify({ config }),
+  })
+
+/** Admin: get event log */
+export const fetchPluginEventLog = (params?: { plugin_id?: string; event?: string; limit?: number }) => {
+  const qs = new URLSearchParams()
+  if (params?.plugin_id) qs.set('plugin_id', params.plugin_id)
+  if (params?.event) qs.set('event', params.event)
+  if (params?.limit) qs.set('limit', String(params.limit))
+  const q = qs.toString()
+  return request<PluginEventLogEntry[]>(`/plugins/events${q ? '?' + q : ''}`)
+}
+
+/** Plugin: report an event execution (public) */
+export const reportPluginEvent = (pluginId: string, event: string, status = 'ok', message = '') =>
+  request<{ ok: boolean }>('/plugins/events/report', {
+    method: 'POST',
+    body: JSON.stringify({ plugin_id: pluginId, event, status, message }),
+  })
+
+/** Plugin: read own config (public) */
+export const fetchPluginConfigPublic = (pluginId: string) =>
+  request<PluginConfigData>(`/plugins/config/${pluginId}`)

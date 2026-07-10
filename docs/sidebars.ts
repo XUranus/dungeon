@@ -55,6 +55,15 @@ const sidebars: SidebarsConfig = {
     },
     {
       type: 'category',
+      label: 'Plugin System',
+      items: [
+        'plugins/overview',
+        'plugins/development',
+        'plugins/api-reference',
+      ],
+    },
+    {
+      type: 'category',
       label: 'Advanced',
       items: [
         'advanced/deployment',
