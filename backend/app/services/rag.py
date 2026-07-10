@@ -20,15 +20,19 @@ from app.services.vectorstore import query
 from app.services import hybrid_retriever
 from app.services.tools import get_enabled_tools, execute_tool
 from app.services.audit import log_llm_call
+from app.services.token_usage import record_usage_from_response
 
 logger = logging.getLogger(__name__)
 
 
 def _format_llm_error(e: Exception) -> str:
     """将LLM异常转换为用户友好的错误信息"""
+    from app.services.notify import notify
     if isinstance(e, AuthenticationError):
+        notify("🚨 LLM API Key 失效", "OpenAI API Key 无效或已过期，请在后台设置页面更新")
         return "API Key 无效或已过期，请在设置页面更新 OpenAI API Key"
     elif isinstance(e, PermissionDeniedError):
+        notify("🚨 LLM API Key 权限不足", f"API Key 权限不足: {str(e)[:100]}")
         return "API Key 权限不足，请检查 Key 是否有访问该模型的权限"
     elif isinstance(e, RateLimitError):
         return "API 调用频率超限，请稍后重试"
@@ -279,6 +283,7 @@ async def rag_query_stream(
         tool_calls=[tc for tc in tool_calls_map.values()] if tool_calls_map else None,
         finish_reason=first_finish_reason,
     )
+    record_usage_from_response(response, "rag")
 
     has_native_tools = first_finish_reason == "tool_calls" and tool_calls_map
     text_tool_calls = _parse_text_tool_calls(full_text) if not has_native_tools and tools else []
@@ -333,6 +338,7 @@ async def rag_query_stream(
             response_text=full,
             extra={"call": f"followup_{label}"},
         )
+        record_usage_from_response(resp, "rag")
 
     # ── 处理工具调用 ──
     if has_native_tools:

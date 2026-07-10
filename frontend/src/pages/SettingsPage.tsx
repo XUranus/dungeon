@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react'
 import {
   Loader2, Check, Settings, Database, Bot, Sparkles, Wrench, Key, Globe,
   TrendingUp, BarChart3, Copy, RefreshCw, Puzzle, ChevronRight, Clock,
-  AlertCircle, FileText, AlertTriangle,
+  AlertCircle, FileText, AlertTriangle, Bell,
 } from 'lucide-react'
 import {
   fetchCrawlInterval, updateCrawlInterval, type CrawlIntervalResponse,
@@ -16,6 +16,8 @@ import {
   fetchAdminPlugins, updateEnabledPlugins, type AdminPluginItem,
   fetchPluginConfig, updatePluginConfig, fetchPluginEventLog,
   type PluginConfigData, type PluginEventLogEntry,
+  fetchTokenUsage, type TokenUsageStats,
+  fetchNotifySettings, updateNotifySettings, type NotifySettings,
 } from '../services/api'
 
 const INTERVAL_OPTIONS = [
@@ -34,6 +36,7 @@ const TABS = [
   { key: 'tools', label: '工具', icon: Wrench },
   { key: 'api', label: 'API', icon: Key },
   { key: 'plugins', label: '插件', icon: Puzzle },
+  { key: 'notify', label: '通知', icon: Bell },
 ] as const
 
 type TabKey = (typeof TABS)[number]['key']
@@ -69,6 +72,7 @@ export default function SettingsPage() {
   const [llmSaving, setLlmSaving] = useState(false)
   const [llmSaved, setLlmSaved] = useState(false)
   const [llmError, setLlmError] = useState('')
+  const [tokenUsage, setTokenUsage] = useState<TokenUsageStats | null>(null)
 
   // ---- Tools settings ----
   const [toolsSettings, setToolsSettings] = useState<ToolsSettings | null>(null)
@@ -96,6 +100,13 @@ export default function SettingsPage() {
   const [pluginConfigJson, setPluginConfigJson] = useState('')
   const [configSaving, setConfigSaving] = useState(false)
   const [configSaved, setConfigSaved] = useState(false)
+
+  // ---- Notify settings ----
+  const [notifySettings, setNotifySettings] = useState<NotifySettings | null>(null)
+  const [notifyUrlInput, setNotifyUrlInput] = useState('')
+  const [notifyKeyInput, setNotifyKeyInput] = useState('')
+  const [notifySaving, setNotifySaving] = useState(false)
+  const [notifySaved, setNotifySaved] = useState(false)
   const [configError, setConfigError] = useState('')
   const [eventLog, setEventLog] = useState<PluginEventLogEntry[]>([])
   const [eventLogLoading, setEventLogLoading] = useState(false)
@@ -112,7 +123,12 @@ export default function SettingsPage() {
       fetchToolsSettings().then(setToolsSettings),
       fetchLogLevel().then((res) => setLogLevel(res.level)),
       fetchApiKeyInfo().then(setKeyInfo),
+      fetchTokenUsage().then(setTokenUsage).catch(() => {}),
       fetchAdminPlugins().then((res) => setPlugins(res.plugins)).catch(() => {}),
+      fetchNotifySettings().then((res) => {
+        setNotifySettings(res)
+        setNotifyUrlInput(res.notifyhub_url)
+      }).catch(() => {}),
     ]).finally(() => { setLoading(false) })
   }, [])
 
@@ -263,6 +279,22 @@ export default function SettingsPage() {
     if (!token) return ''
     if (token.length <= 32) return token
     return token.slice(0, 16) + ' ··· ' + token.slice(-12)
+  }
+
+  const handleNotifySave = async () => {
+    if (!notifySettings) return
+    setNotifySaving(true)
+    setNotifySaved(false)
+    try {
+      const res = await updateNotifySettings({
+        notifyhub_url: notifyUrlInput.trim(),
+        ...(notifyKeyInput.trim() ? { notifyhub_key: notifyKeyInput.trim() } : {}),
+      })
+      setNotifySettings(res)
+      setNotifyKeyInput('')
+      setNotifySaved(true)
+      setTimeout(() => setNotifySaved(false), 2000)
+    } catch { /* ignore */ } finally { setNotifySaving(false) }
   }
 
   const handlePluginToggle = async (pluginId: string) => {
@@ -639,6 +671,133 @@ export default function SettingsPage() {
           </div>
         )}
       </section>
+
+      {/* Token 用量统计 */}
+      {tokenUsage && (
+        <section className="glass-card dark:glass-card-dark rounded-xl p-5">
+          <div className="flex items-center justify-between mb-1">
+            <h2 className="text-lg font-medium text-neutral-800 dark:text-neutral-200">Token 用量</h2>
+            <span className="text-xs text-neutral-500 dark:text-neutral-400">
+              {tokenUsage.year}年{tokenUsage.month}月
+            </span>
+          </div>
+          <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-4">
+            当月 LLM 调用消耗统计，每月月初自动归零
+          </p>
+
+          {/* 总量卡片 */}
+          <div className="grid grid-cols-3 gap-3 mb-4">
+            <div className="bg-neutral-50 dark:bg-neutral-800/50 rounded-xl p-3 text-center">
+              <div className="text-xl font-bold text-neutral-800 dark:text-neutral-100">
+                {tokenUsage.total_tokens >= 1000000
+                  ? `${(tokenUsage.total_tokens / 1000000).toFixed(1)}M`
+                  : tokenUsage.total_tokens >= 1000
+                    ? `${(tokenUsage.total_tokens / 1000).toFixed(1)}K`
+                    : tokenUsage.total_tokens}
+              </div>
+              <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">总 Tokens</div>
+            </div>
+            <div className="bg-neutral-50 dark:bg-neutral-800/50 rounded-xl p-3 text-center">
+              <div className="text-xl font-bold text-blue-600 dark:text-blue-400">
+                {tokenUsage.prompt_tokens >= 1000000
+                  ? `${(tokenUsage.prompt_tokens / 1000000).toFixed(1)}M`
+                  : tokenUsage.prompt_tokens >= 1000
+                    ? `${(tokenUsage.prompt_tokens / 1000).toFixed(1)}K`
+                    : tokenUsage.prompt_tokens}
+              </div>
+              <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">输入 Tokens</div>
+            </div>
+            <div className="bg-neutral-50 dark:bg-neutral-800/50 rounded-xl p-3 text-center">
+              <div className="text-xl font-bold text-emerald-600 dark:text-emerald-400">
+                {tokenUsage.completion_tokens >= 1000000
+                  ? `${(tokenUsage.completion_tokens / 1000000).toFixed(1)}M`
+                  : tokenUsage.completion_tokens >= 1000
+                    ? `${(tokenUsage.completion_tokens / 1000).toFixed(1)}K`
+                    : tokenUsage.completion_tokens}
+              </div>
+              <div className="text-[11px] text-neutral-500 dark:text-neutral-400 mt-0.5">输出 Tokens</div>
+            </div>
+          </div>
+
+          <div className="text-xs text-neutral-500 dark:text-neutral-400 mb-3">
+            共 {tokenUsage.total_calls} 次调用
+          </div>
+
+          {/* 按功能分组 */}
+          {tokenUsage.by_caller.length > 0 && (
+            <div className="mb-3">
+              <div className="text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-2">按功能</div>
+              <div className="space-y-1.5">
+                {tokenUsage.by_caller.sort((a, b) => b.total_tokens - a.total_tokens).map((item) => {
+                  const pct = tokenUsage.total_tokens > 0 ? (item.total_tokens / tokenUsage.total_tokens * 100) : 0
+                  const callerLabels: Record<string, string> = {
+                    rag: 'RAG 问答', professor: '教授指数', insight: '观点总结',
+                    holdings: '持仓生成', ingestion: '图片识别',
+                  }
+                  return (
+                    <div key={item.caller} className="flex items-center gap-2">
+                      <span className="text-xs text-neutral-600 dark:text-neutral-400 w-16 flex-shrink-0">
+                        {callerLabels[item.caller] || item.caller}
+                      </span>
+                      <div className="flex-1 h-1.5 bg-neutral-100 dark:bg-neutral-700 rounded-full overflow-hidden">
+                        <div
+                          className="h-full bg-neutral-400 dark:bg-neutral-500 rounded-full"
+                          style={{ width: `${pct}%` }}
+                        />
+                      </div>
+                      <span className="text-[11px] text-neutral-500 dark:text-neutral-400 w-16 text-right flex-shrink-0">
+                        {item.total_tokens >= 1000 ? `${(item.total_tokens / 1000).toFixed(1)}K` : item.total_tokens}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 按模型分组 */}
+          {tokenUsage.by_model.length > 0 && (
+            <div>
+              <div className="text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-2">按模型</div>
+              <div className="space-y-1">
+                {tokenUsage.by_model.sort((a, b) => b.total_tokens - a.total_tokens).map((item) => (
+                  <div key={item.model} className="flex items-center justify-between text-xs">
+                    <span className="text-neutral-600 dark:text-neutral-400 truncate">{item.model}</span>
+                    <span className="text-neutral-500 dark:text-neutral-400 ml-2 flex-shrink-0">
+                      {item.total_tokens >= 1000 ? `${(item.total_tokens / 1000).toFixed(1)}K` : item.total_tokens}
+                      <span className="text-neutral-400 dark:text-neutral-500 ml-1">({item.calls}次)</span>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* 每日趋势 */}
+          {tokenUsage.by_day.length > 0 && (
+            <div className="mt-3">
+              <div className="text-xs font-medium text-neutral-600 dark:text-neutral-400 mb-2">每日趋势</div>
+              <div className="flex items-end gap-1 h-16">
+                {tokenUsage.by_day.map((day) => {
+                  const maxTokens = Math.max(...tokenUsage.by_day.map(d => d.total_tokens), 1)
+                  const h = Math.max(2, (day.total_tokens / maxTokens) * 100)
+                  return (
+                    <div key={day.date} className="flex-1 flex flex-col items-center gap-0.5" title={`${day.date}: ${day.total_tokens} tokens`}>
+                      <div
+                        className="w-full bg-neutral-300 dark:bg-neutral-600 rounded-sm"
+                        style={{ height: `${h}%`, minHeight: '2px' }}
+                      />
+                      <span className="text-[8px] text-neutral-400 dark:text-neutral-500">
+                        {day.date.slice(5)}
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          )}
+        </section>
+      )}
 
       <p className="text-xs text-neutral-400 dark:text-neutral-500">
         修改配置后会自动重试 LLM 连接，无需重启服务。
@@ -1128,6 +1287,66 @@ export default function SettingsPage() {
     </div>
   )
 
+  const renderNotify = () => (
+    <div className="space-y-5">
+      <section className="glass-card dark:glass-card-dark rounded-xl p-5">
+        <h2 className="text-sm font-medium mb-1 text-neutral-800 dark:text-neutral-200">通知推送</h2>
+        <p className="text-xs text-neutral-500 dark:text-neutral-400 mb-4">
+          配置 NotifyHub 推送服务，系统异常和关键错误将自动推送给管理员
+        </p>
+        {notifySettings ? (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">Push 地址</label>
+              <input
+                type="text"
+                value={notifyUrlInput}
+                onChange={(e) => setNotifyUrlInput(e.target.value)}
+                placeholder="http://192.168.0.107:4321"
+                className="w-full px-3 py-2 text-sm rounded-lg border border-neutral-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-100 font-mono"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-neutral-700 dark:text-neutral-300 mb-1.5">API Key</label>
+              <input
+                type="password"
+                value={notifyKeyInput}
+                onChange={(e) => setNotifyKeyInput(e.target.value)}
+                placeholder={notifySettings.notifyhub_key_set ? '已设置（留空保持不变）' : 'nfkey_...'}
+                className="w-full px-3 py-2 text-sm rounded-lg border border-neutral-200 dark:border-neutral-600 bg-white dark:bg-neutral-700 text-neutral-900 dark:text-neutral-100 font-mono"
+              />
+            </div>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleNotifySave}
+                disabled={notifySaving}
+                className="px-4 py-2 text-sm font-medium rounded-lg bg-neutral-900 dark:bg-neutral-100 text-white dark:text-neutral-900 hover:opacity-90 disabled:opacity-50 transition-all"
+              >
+                {notifySaving ? <Loader2 className="w-4 h-4 animate-spin" /> : '保存'}
+              </button>
+              {notifySaved && (
+                <span className="text-xs text-green-600 dark:text-green-400 flex items-center gap-1">
+                  <Check className="w-3 h-3" /> 已保存
+                </span>
+              )}
+            </div>
+            <div className="bg-neutral-50 dark:bg-neutral-800/50 rounded-lg p-3">
+              <p className="text-xs text-neutral-500 dark:text-neutral-400 font-medium mb-2">自动推送场景：</p>
+              <ul className="text-xs text-neutral-500 dark:text-neutral-400 space-y-1">
+                <li>• 知识星球 / 知乎 Cookie 过期（认证失败）</li>
+                <li>• LLM API Key 无效或过期</li>
+                <li>• Embedding API Key 异常</li>
+                <li>• 定时采集任务失败</li>
+              </ul>
+            </div>
+          </div>
+        ) : (
+          <div className="text-sm text-neutral-400">加载中...</div>
+        )}
+      </section>
+    </div>
+  )
+
   const tabContent: Record<TabKey, () => React.JSX.Element> = {
     basic: renderBasic,
     llm: renderLLM,
@@ -1135,6 +1354,7 @@ export default function SettingsPage() {
     tools: renderTools,
     api: renderApi,
     plugins: renderPlugins,
+    notify: renderNotify,
   }
 
   return (

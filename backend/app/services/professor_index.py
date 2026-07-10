@@ -8,6 +8,7 @@ from sqlalchemy import select, desc, or_
 
 from app.config import settings
 from app.services.llm_client import get_llm_client
+from app.services.token_usage import record_usage_from_response
 from app.database import async_session
 from app.models import Topic, ProfessorIndexSnapshot, ProfessorIndexHolding
 
@@ -104,6 +105,7 @@ async def _describe_images(image_urls: list[str]) -> list[str]:
                 max_tokens=800,
                 temperature=0.1,
             )
+            record_usage_from_response(response, "professor")
             desc = response.choices[0].message.content
             if desc:
                 descriptions.append(desc.strip())
@@ -221,6 +223,7 @@ async def parse_professor_index(topics: list[Topic]) -> dict:
             temperature=0.1,
             response_format={"type": "json_object"},
         )
+        record_usage_from_response(response, "professor")
     except Exception:
         logger.exception("LLM 调用失败（教授指数解析）")
         return {"china": {"holdings": [], "notes": ""}, "global": {"holdings": [], "notes": ""}}

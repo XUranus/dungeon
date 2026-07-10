@@ -8,6 +8,7 @@ from sqlalchemy import select, delete
 
 from app.config import settings
 from app.services.llm_client import get_llm_client
+from app.services.token_usage import record_usage_from_response
 from app.database import async_session
 from app.models import Topic, RecommendedHolding
 
@@ -89,6 +90,7 @@ async def generate_holdings(days: int = 7, max_topics: int = 50) -> list[dict]:
             temperature=0.2,
             response_format={"type": "json_object"},
         )
+        record_usage_from_response(response, "holdings")
     except Exception:
         logger.exception("LLM 调用失败（持仓生成）")
         return []

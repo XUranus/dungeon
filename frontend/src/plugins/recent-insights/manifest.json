@@ -2,14 +2,13 @@
   "id": "recent-insights",
   "name": "近期观点",
   "icon": "MessageSquare",
-  "description": "展示最新市场动态时间线，支持多平台来源过滤",
+  "description": "定期生成近期观点总结报告，按主题归纳大V观点并附带原文链接。管理员可配置检查间隔和回顾天数。",
   "order": 20,
   "config_defaults": {
-    "default_limit": 30,
-    "show_platform_filter": true,
-    "auto_refresh_seconds": 0
+    "interval_minutes": 480,
+    "ndays": 3
   },
   "hooks": {
-    "topic_created": "刷新观点列表（当新观点入库时）"
+    "topic_created": "检查是否需要生成新的观点总结"
   }
 }

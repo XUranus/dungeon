@@ -81,6 +81,11 @@ class ZsxqCrawler(BaseCrawler):
                 status = e.response.status_code
                 if status in (401, 403):
                     logger.error(f"[zsxq] {status} 认证失败, 请检查Cookie是否过期")
+                    from app.services.notify import notify
+                    notify(
+                        "⚠️ 知识星球 Cookie 过期",
+                        f"认证失败 ({status})，请在后台设置页面更新知识星球 Cookie",
+                    )
                     raise
                 if status >= 500 and attempt < MAX_RETRIES:
                     wait = RETRY_BACKOFF_BASE * (2 ** (attempt - 1))

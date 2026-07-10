@@ -18,9 +18,12 @@ logger = logging.getLogger(__name__)
 
 def format_embedding_error(e: Exception) -> str:
     """将Embedding异常转换为用户友好的错误信息"""
+    from app.services.notify import notify
     if isinstance(e, AuthenticationError):
+        notify("🚨 Embedding API Key 失效", "Embedding API Key 无效或已过期，请在后台设置页面更新")
         return "API Key 无效或已过期，请在设置页面更新 OpenAI API Key"
     elif isinstance(e, PermissionDeniedError):
+        notify("🚨 Embedding API Key 权限不足", f"Embedding API Key 权限不足: {str(e)[:100]}")
         return "API Key 权限不足，请检查 Key 是否有访问 Embedding 模型的权限"
     elif isinstance(e, RateLimitError):
         return "API 调用频率超限，请稍后重试"

@@ -474,3 +474,100 @@ export const updateLLMConfig = (data: LLMConfig) =>
     method: 'PUT',
     body: JSON.stringify(data),
   })
+
+// ---- Insight Report ----
+
+export interface InsightSource {
+  id: number
+  title: string
+  url: string | null
+  platform: string
+  published_at: string | null
+}
+
+export interface InsightReportItem {
+  id: number
+  generated_at: string | null
+  time_range_start: string | null
+  time_range_end: string | null
+  topic_count: number
+  content: string
+  sources_json: InsightSource[]
+}
+
+export const fetchInsightReports = (limit: number = 10) =>
+  request<InsightReportItem[]>(`/insight-report?limit=${limit}`)
+
+export const fetchInsightReport = (id: number) =>
+  request<InsightReportItem>(`/insight-report/${id}`)
+
+export const generateInsightReport = () =>
+  request<{ skipped?: boolean; report_id?: number; topic_count?: number; time_range?: string }>('/insight-report/generate', { method: 'POST' })
+
+export const fetchInsightReportConfig = () =>
+  request<{ interval_minutes: number; ndays: number }>('/insight-report/config')
+
+export const updateInsightReportConfig = (data: { interval_minutes?: number; ndays?: number }) =>
+  request<{ interval_minutes: number; ndays: number }>('/insight-report/config', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })
+
+// ---- Token Usage ----
+
+export interface TokenUsageCaller {
+  caller: string
+  total_tokens: number
+  calls: number
+}
+
+export interface TokenUsageModel {
+  model: string
+  total_tokens: number
+  calls: number
+}
+
+export interface TokenUsageDay {
+  date: string
+  total_tokens: number
+  calls: number
+}
+
+export interface TokenUsageStats {
+  year: number
+  month: number
+  prompt_tokens: number
+  completion_tokens: number
+  total_tokens: number
+  total_calls: number
+  by_caller: TokenUsageCaller[]
+  by_model: TokenUsageModel[]
+  by_day: TokenUsageDay[]
+}
+
+export const fetchTokenUsage = (year?: number, month?: number) => {
+  const params = new URLSearchParams()
+  if (year) params.set('year', String(year))
+  if (month) params.set('month', String(month))
+  const qs = params.toString()
+  return request<TokenUsageStats>(`/token-usage${qs ? '?' + qs : ''}`)
+}
+
+// ── NotifyHub 通知设置 ──
+
+export interface NotifySettings {
+  notifyhub_key_set: boolean
+  notifyhub_url: string
+}
+
+export const fetchNotifySettings = () =>
+  request<NotifySettings>('/settings/notify')
+
+export const updateNotifySettings = (data: {
+  notifyhub_key?: string
+  notifyhub_url?: string
+}) =>
+  request<NotifySettings>('/settings/notify', {
+    method: 'PUT',
+    body: JSON.stringify(data),
+  })

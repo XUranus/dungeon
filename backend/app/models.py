@@ -144,6 +144,32 @@ class ProfessorIndexHolding(Base):
     added_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class TokenUsage(Base):
+    """LLM Token 用量记录"""
+    __tablename__ = "token_usage"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    model: Mapped[str] = mapped_column(String(64), nullable=False)
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    caller: Mapped[str] = mapped_column(String(32), nullable=False)  # rag|professor|insight|holdings|ingestion
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+
+
+class InsightReport(Base):
+    """近期观点总结报告"""
+    __tablename__ = "insight_reports"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    generated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    time_range_start: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    time_range_end: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    topic_count: Mapped[int] = mapped_column(Integer, default=0)
+    content: Mapped[str] = mapped_column(Text, nullable=False)  # LLM 生成的总结（Markdown）
+    sources_json: Mapped[list | None] = mapped_column(JSON, nullable=True)  # [{title, url, platform, published_at}]
+
+
 class ProfessorIndexParseTask(Base):
     """教授指数解析任务记录"""
     __tablename__ = "professor_index_parse_tasks"

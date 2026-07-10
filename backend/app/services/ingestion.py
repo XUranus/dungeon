@@ -15,6 +15,7 @@ from app.config import settings
 from app.services.embedding import get_embeddings
 from app.services.vectorstore import add_documents
 from app.utils.text import split_text_to_chunks
+from app.services.token_usage import record_usage_from_response
 
 logger = logging.getLogger(__name__)
 
@@ -165,6 +166,7 @@ async def _describe_images(topic: Topic) -> str:
                     max_tokens=200,
                     temperature=0.1,
                 )
+                record_usage_from_response(response, "ingestion")
                 desc = response.choices[0].message.content
                 if desc:
                     descriptions.append(desc.strip())

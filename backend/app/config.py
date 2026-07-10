@@ -59,6 +59,10 @@ _DEFAULTS: dict = {
     "system_avatar_url": "",
     "system_owner_name": "",
     "enabled_public_plugins": ["professor-index", "recent-insights"],
+    "insight_report_interval_minutes": 480,
+    "insight_report_ndays": 3,
+    "notifyhub_key": "",
+    "notifyhub_url": "",
 }
 
 

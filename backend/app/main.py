@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 
 from app.database import init_db, async_session, engine
 from app.config import settings
-from app.routers import chat, topics, sources, proxy, auth, dashboard, holdings, professor_index, mcp, plugins
+from app.routers import chat, topics, sources, proxy, auth, dashboard, holdings, professor_index, mcp, plugins, insight_report, token_usage
 from app.routers import settings as settings_router
 from app.utils.scheduler import setup_scheduler, shutdown_scheduler
 
@@ -123,6 +123,9 @@ app.include_router(settings_router.public_router)
 app.include_router(holdings.router)
 app.include_router(professor_index.router)
 app.include_router(professor_index.public_router)
+app.include_router(insight_report.router)
+app.include_router(insight_report.public_router)
+app.include_router(token_usage.router)
 app.include_router(proxy.router)
 app.include_router(mcp.router)
 app.include_router(plugins.router)

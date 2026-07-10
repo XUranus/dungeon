@@ -119,6 +119,23 @@ async def update_plugin_config(plugin_id: str, req: PluginConfigUpdateRequest):
     if not plugin:
         raise HTTPException(status_code=404, detail=f"Plugin not found: {plugin_id}")
     updated = runtime.update_config(plugin_id, req.config)
+
+    # 插件配置变更时同步相关系统设置
+    if plugin_id == "recent-insights":
+        patch = {}
+        if "interval_minutes" in req.config:
+            patch["insight_report_interval_minutes"] = req.config["interval_minutes"]
+        if "ndays" in req.config:
+            patch["insight_report_ndays"] = req.config["ndays"]
+        if patch:
+            settings.update(patch)
+            logger.info("recent-insights 配置已同步到全局设置: %s", patch)
+            # 热更新调度器
+            if "insight_report_interval_minutes" in patch:
+                logger.info("调用 apply_insight_report_interval(%d)", patch["insight_report_interval_minutes"])
+                from app.utils.scheduler import apply_insight_report_interval
+                apply_insight_report_interval(patch["insight_report_interval_minutes"])
+
     return PluginConfigResponse(
         plugin_id=plugin_id,
         config=updated,

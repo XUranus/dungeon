@@ -350,6 +350,43 @@ class LLMConfigRequest(BaseModel):
     embedding_provider: str = Field(default="openai", description="Embedding 提供商: openai 或 local")
 
 
+# ── 通知设置 ──
+
+class NotifySettingsResponse(BaseModel):
+    notifyhub_key_set: bool  # 不暴露实际 key
+    notifyhub_url: str
+
+
+class NotifySettingsRequest(BaseModel):
+    notifyhub_key: str | None = None
+    notifyhub_url: str | None = None
+
+
+@router.get("/notify", response_model=NotifySettingsResponse)
+async def read_notify_settings():
+    """获取通知配置"""
+    return NotifySettingsResponse(
+        notifyhub_key_set=bool(settings.notifyhub_key),
+        notifyhub_url=settings.notifyhub_url,
+    )
+
+
+@router.put("/notify", response_model=NotifySettingsResponse)
+async def update_notify_settings(req: NotifySettingsRequest):
+    """更新通知配置"""
+    patch: dict = {}
+    if req.notifyhub_key is not None:
+        patch["notifyhub_key"] = req.notifyhub_key
+    if req.notifyhub_url is not None:
+        patch["notifyhub_url"] = req.notifyhub_url
+    if patch:
+        settings.update(patch)
+    return NotifySettingsResponse(
+        notifyhub_key_set=bool(settings.notifyhub_key),
+        notifyhub_url=settings.notifyhub_url,
+    )
+
+
 @router.get("/llm", response_model=LLMConfigResponse)
 async def read_llm_config():
     """获取 LLM 配置（需管理员）"""
