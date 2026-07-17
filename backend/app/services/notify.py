@@ -1,24 +1,54 @@
 """NotifyHub 通知推送模块 — 向管理员推送系统异常和致命错误"""
 
 import asyncio
+import json
 import logging
 import time
+from pathlib import Path
 from typing import Literal
 
 import httpx
 
-from app.config import settings
+from app.config import settings, PROJECT_ROOT
 
 logger = logging.getLogger(__name__)
 
-# ── 通知去重节流 ──
-# 同一 subject 在冷却时间内只发送一次，避免重复推送
-_notify_cooldown_secs: int = 6 * 3600  # 默认 6 小时
-_last_sent: dict[str, float] = {}  # subject → last_sent_timestamp
+# ── 持久化状态文件（容器重启不丢失）──
+_STATE_PATH = PROJECT_ROOT / "data" / "notify_state.json"
+_notify_cooldown_secs: int = 6 * 3600  # 同一 subject 冷却时间（秒）
 
-# ── Cookie 失效状态跟踪 ──
-# 爬虫检测到 cookie 失效后标记，后续定时爬取直接跳过，直到 cookie 被更新
+# 内存中的状态，启动时从文件加载
+_last_sent: dict[str, float] = {}       # subject → last_sent_timestamp
 _cookie_expired_flags: dict[str, bool] = {}  # platform → is_expired
+
+
+def _load_state() -> None:
+    """从文件加载持久化状态"""
+    try:
+        if _STATE_PATH.exists():
+            data = json.loads(_STATE_PATH.read_text())
+            _last_sent.update(data.get("last_sent", {}))
+            _cookie_expired_flags.update(data.get("cookie_expired", {}))
+            logger.info("通知状态已加载: %d 条节流记录, %d 个 cookie 失效标记",
+                        len(_last_sent), len(_cookie_expired_flags))
+    except Exception as e:
+        logger.warning("加载通知状态失败: %s", e)
+
+
+def _save_state() -> None:
+    """持久化状态到文件"""
+    try:
+        _STATE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _STATE_PATH.write_text(json.dumps({
+            "last_sent": _last_sent,
+            "cookie_expired": _cookie_expired_flags,
+        }, ensure_ascii=False, indent=2))
+    except Exception as e:
+        logger.warning("保存通知状态失败: %s", e)
+
+
+# 启动时加载
+_load_state()
 
 
 def is_cookie_expired(platform: str) -> bool:
@@ -29,12 +59,14 @@ def is_cookie_expired(platform: str) -> bool:
 def mark_cookie_expired(platform: str) -> None:
     """标记平台 cookie 失效"""
     _cookie_expired_flags[platform] = True
+    _save_state()
     logger.warning("Cookie 失效标记: %s", platform)
 
 
 def clear_cookie_expired(platform: str) -> None:
     """清除 cookie 失效标记（cookie 更新后调用）"""
     if _cookie_expired_flags.pop(platform, None):
+        _save_state()
         logger.info("Cookie 失效标记已清除: %s", platform)
 
 
@@ -98,6 +130,7 @@ def notify(
             logger.debug("通知被节流跳过（冷却中）: %s", subject)
             return
     _last_sent[subject] = now
+    _save_state()
     try:
         loop = asyncio.get_running_loop()
         task = loop.create_task(_send_async(subject, body, fmt))
