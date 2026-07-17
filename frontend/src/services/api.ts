@@ -255,6 +255,32 @@ export const updateSystemAvatar = (avatar_url: string) =>
     body: JSON.stringify({ avatar_url }),
   })
 
+// ---- Platform Cookie Config (admin) ----
+export interface PlatformConfigField {
+  key: string
+  label: string
+  placeholder: string
+  has_value: boolean
+  display: string
+}
+
+export interface PlatformConfigResponse {
+  platform: string
+  configured: boolean
+  cookie_valid: boolean | null
+  cookie_error: string
+  fields: PlatformConfigField[]
+}
+
+export const fetchPlatformConfig = (platform: string) =>
+  request<PlatformConfigResponse>(`/settings/platform-config/${platform}`)
+
+export const updatePlatformConfig = (platform: string, values: Record<string, string>) =>
+  request<{ platform: string; updated: string[] }>(`/settings/platform-config/${platform}`, {
+    method: 'PUT',
+    body: JSON.stringify({ values }),
+  })
+
 export const uploadSystemAvatar = async (file: File): Promise<SystemAvatarResponse> => {
   const formData = new FormData()
   formData.append('file', file)

@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef } from 'react'
-import { RefreshCw, AlertCircle, AlertTriangle, CheckCircle, Loader2, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useState, useEffect, useRef, useCallback } from 'react'
+import { RefreshCw, AlertCircle, AlertTriangle, CheckCircle, Loader2, ChevronLeft, ChevronRight, Settings, Eye, EyeOff, X } from 'lucide-react'
 import {
   fetchPlatforms,
   crawlAll,
@@ -7,6 +7,10 @@ import {
   fetchCrawlTasks,
   startCrawlAsync,
   fetchCrawlStatus,
+  fetchPlatformConfig,
+  updatePlatformConfig,
+  type PlatformConfigField,
+  type PlatformConfigResponse,
 } from '../services/api'
 import type { CrawlProgress } from '../services/api'
 import type { CrawlTask } from '../types'
@@ -21,13 +25,133 @@ const isIdle = (s: CrawlProgress | { status: 'idle' }): s is { status: 'idle' } 
 
 const PAGE_SIZE = 10
 
+/* ── 平台配置弹窗 ── */
+function PlatformConfigModal({
+  platform,
+  onClose,
+  onSaved,
+}: {
+  platform: string
+  onClose: () => void
+  onSaved: () => void
+}) {
+  const [fields, setFields] = useState<PlatformConfigField[]>([])
+  const [values, setValues] = useState<Record<string, string>>({})
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [showPasswords, setShowPasswords] = useState<Record<string, boolean>>({})
+
+  useEffect(() => {
+    fetchPlatformConfig(platform)
+      .then((res) => {
+        setFields(res.fields)
+        // 初始化空值
+        const init: Record<string, string> = {}
+        res.fields.forEach((f) => { init[f.key] = '' })
+        setValues(init)
+      })
+      .finally(() => setLoading(false))
+  }, [platform])
+
+  const handleSave = async () => {
+    // 只发送有值的字段
+    const patch: Record<string, string> = {}
+    Object.entries(values).forEach(([k, v]) => {
+      if (v.trim()) patch[k] = v.trim()
+    })
+    if (Object.keys(patch).length === 0) return
+    setSaving(true)
+    try {
+      await updatePlatformConfig(platform, patch)
+      onSaved()
+      onClose()
+    } catch { /* ignore */ } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="glass-card dark:glass-card-dark rounded-2xl p-6 w-full max-w-lg shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-neutral-800 dark:text-neutral-200">
+            配置 {platformLabel[platform] || platform}
+          </h3>
+          <button onClick={onClose} className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300">
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {loading ? (
+          <div className="flex items-center gap-2 text-neutral-400 py-8 justify-center">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="text-sm">加载中...</span>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            {fields.map((f) => (
+              <div key={f.key}>
+                <label className="block text-sm font-medium text-neutral-700 dark:text-neutral-300 mb-1">
+                  {f.label}
+                  {f.has_value && (
+                    <span className="ml-2 text-xs text-green-600 dark:text-green-400 font-normal">
+                      当前: {f.display}
+                    </span>
+                  )}
+                </label>
+                <div className="relative">
+                  <input
+                    type={showPasswords[f.key] ? 'text' : 'password'}
+                    value={values[f.key] || ''}
+                    onChange={(e) => setValues({ ...values, [f.key]: e.target.value })}
+                    placeholder={f.has_value ? '留空则不更新' : f.placeholder}
+                    className="w-full bg-neutral-100 dark:bg-neutral-800 rounded-xl px-4 py-2.5 pr-10 text-sm text-neutral-900 dark:text-neutral-100 placeholder-neutral-400 dark:placeholder-neutral-500 focus:outline-none focus:ring-2 focus:ring-neutral-300 dark:focus:ring-neutral-600 border border-neutral-200 dark:border-neutral-700"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPasswords({ ...showPasswords, [f.key]: !showPasswords[f.key] })}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300"
+                  >
+                    {showPasswords[f.key] ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <div className="flex items-center gap-3 mt-6">
+          <button
+            onClick={handleSave}
+            disabled={saving || loading}
+            className="bg-neutral-900 dark:bg-white text-white dark:text-neutral-900 rounded-xl px-5 py-2 text-sm hover:bg-neutral-800 dark:hover:bg-neutral-100 disabled:opacity-50 transition-all flex items-center gap-1.5"
+          >
+            {saving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+            保存
+          </button>
+          <button
+            onClick={onClose}
+            className="text-sm text-neutral-500 dark:text-neutral-400 hover:text-neutral-700 dark:hover:text-neutral-200 transition-colors"
+          >
+            取消
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ── 主页面 ── */
 export default function SourcesPage() {
   const [platforms, setPlatforms] = useState<string[]>([])
+  const [platformStatuses, setPlatformStatuses] = useState<Record<string, PlatformConfigResponse>>({})
   const [tasks, setTasks] = useState<CrawlTask[]>([])
   const [crawling, setCrawling] = useState<string | null>(null)
   const [asyncTask, setAsyncTask] = useState<CrawlProgress | null>(null)
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
+  const [configPlatform, setConfigPlatform] = useState<string | null>(null)
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const load = async () => {
@@ -41,10 +165,25 @@ export default function SourcesPage() {
     }
   }
 
+  // 加载各平台 Cookie 验证状态
+  const loadPlatformStatuses = useCallback(async () => {
+    const results: Record<string, PlatformConfigResponse> = {}
+    await Promise.allSettled(
+      ['zhihu', 'zsxq'].map(async (p) => {
+        try {
+          results[p] = await fetchPlatformConfig(p)
+        } catch { /* ignore */ }
+      })
+    )
+    setPlatformStatuses(results)
+  }, [])
+
+  useEffect(() => { loadPlatformStatuses() }, [loadPlatformStatuses])
+
   useEffect(() => { load() }, [])
 
   // 轮询异步任务状态
-  const startPolling = () => {
+  const startPolling = useCallback(() => {
     if (pollRef.current) return
     pollRef.current = setInterval(async () => {
       try {
@@ -60,18 +199,16 @@ export default function SourcesPage() {
             setTimeout(() => { setAsyncTask(null); load() }, 3000)
           }
         }
-      } catch {
-        // 忽略轮询错误
-      }
+      } catch { /* ignore */ }
     }, 2000)
-  }
+  }, [])
 
-  const stopPolling = () => {
+  const stopPolling = useCallback(() => {
     if (pollRef.current) {
       clearInterval(pollRef.current)
       pollRef.current = null
     }
-  }
+  }, [])
 
   useEffect(() => {
     fetchCrawlStatus().then((status) => {
@@ -81,7 +218,7 @@ export default function SourcesPage() {
       }
     })
     return () => stopPolling()
-  }, [])
+  }, [startPolling, stopPolling])
 
   const isTaskRunning = asyncTask?.status === 'running' || !!crawling
 
@@ -150,7 +287,7 @@ export default function SourcesPage() {
       {platforms.length === 0 && !loading && (
         <div className="glass-card dark:glass-card-dark border border-yellow-300/40 dark:border-yellow-600/30 rounded-xl p-3 mb-4 text-sm text-yellow-800 dark:text-yellow-300">
           <AlertTriangle size={14} className="inline flex-shrink-0 mr-1 -mt-px" />
-          未配置任何平台。请在 config.json 中填写 zsxq_cookie / zsxq_group_id 或 zhihu_cookie / zhihu_url_token。
+          未配置任何平台。请点击下方平台卡片的「配置」按钮填写 Cookie。
         </div>
       )}
 
@@ -207,25 +344,57 @@ export default function SourcesPage() {
       <div className="grid grid-cols-2 gap-4 mb-8">
         {['zhihu', 'zsxq'].map((p) => {
           const enabled = platforms.includes(p)
+          const ps = platformStatuses[p]
+          const cookieValid = ps?.cookie_valid
+          const cookieError = ps?.cookie_error || ''
+          // 状态：未配置 / 过期 / 有效 / 检测中
+          let badgeText = '未配置'
+          let badgeClass = 'bg-neutral-100/60 dark:bg-neutral-800/40 text-neutral-400 dark:text-neutral-500'
+          if (enabled) {
+            if (cookieValid === null) {
+              badgeText = '检测中...'
+              badgeClass = 'bg-blue-100/60 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400'
+            } else if (cookieValid) {
+              badgeText = '有效'
+              badgeClass = 'bg-green-100/60 dark:bg-green-900/40 text-green-700 dark:text-green-300'
+            } else {
+              badgeText = '已过期'
+              badgeClass = 'bg-red-100/60 dark:bg-red-900/40 text-red-700 dark:text-red-300'
+            }
+          }
           return (
             <div
               key={p}
               className={`rounded-xl p-4 transition-all ${
                 enabled
-                  ? 'glass-card dark:glass-card-dark'
+                  ? cookieValid === false
+                    ? 'glass-card dark:glass-card-dark border border-red-300/40 dark:border-red-600/30'
+                    : 'glass-card dark:glass-card-dark'
                   : 'bg-white/80 dark:bg-neutral-800/80 border border-neutral-200 dark:border-neutral-700'
               }`}
             >
               <div className="flex items-center justify-between">
                 <span className="font-medium text-neutral-800 dark:text-neutral-200">{platformLabel[p]}</span>
-                <span className={`text-xs px-2 py-0.5 rounded-lg ${
-                  enabled
-                    ? 'bg-green-100/60 dark:bg-green-900/40 text-green-700 dark:text-green-300'
-                    : 'bg-neutral-100/60 dark:bg-neutral-800/40 text-neutral-400 dark:text-neutral-500'
-                }`}>
-                  {enabled ? '已配置' : '未配置'}
-                </span>
+                <div className="flex items-center gap-2">
+                  <span className={`text-xs px-2 py-0.5 rounded-lg ${badgeClass}`}>
+                    {badgeText}
+                  </span>
+                  <button
+                    onClick={() => setConfigPlatform(p)}
+                    className="p-1.5 rounded-lg hover:bg-neutral-100 dark:hover:bg-neutral-700 text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-300 transition-colors"
+                    title="配置 Cookie"
+                  >
+                    <Settings className="w-3.5 h-3.5" />
+                  </button>
+                </div>
               </div>
+              {/* Cookie 过期警告 */}
+              {enabled && cookieValid === false && (
+                <div className="mt-2 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
+                  <AlertTriangle className="w-3.5 h-3.5 flex-shrink-0 mt-0.5" />
+                  <span>{cookieError || 'Cookie 已失效，请点击 ⚙️ 更新'}</span>
+                </div>
+              )}
               {enabled && (
                 <div className="flex gap-3 mt-3">
                   <button
@@ -250,6 +419,15 @@ export default function SourcesPage() {
           )
         })}
       </div>
+
+      {/* 配置弹窗 */}
+      {configPlatform && (
+        <PlatformConfigModal
+          platform={configPlatform}
+          onClose={() => setConfigPlatform(null)}
+          onSaved={() => { load(); loadPlatformStatuses() }}
+        />
+      )}
 
       {/* 爬取历史 - 表格 */}
       <div className="flex items-center justify-between mb-3">

@@ -141,7 +141,8 @@ class ZhihuCrawler(BaseCrawler):
                 status = e.response.status_code
                 if status in (401, 403):
                     logger.error(f"[zhihu] {status} 认证失败, 请检查Cookie是否过期")
-                    from app.services.notify import notify
+                    from app.services.notify import notify, mark_cookie_expired
+                    mark_cookie_expired("zhihu")
                     notify(
                         "⚠️ 知乎 Cookie 过期",
                         f"认证失败 ({status})，请在后台设置页面更新知乎 Cookie",
@@ -220,6 +221,10 @@ class ZhihuCrawler(BaseCrawler):
         全部通过 Node.js 数据服务器（Playwright 浏览器）获取，
         因为知乎对 httpx 等非浏览器请求会返回 403（TLS 指纹检测）。
         """
+        from app.services.notify import is_cookie_expired
+        if is_cookie_expired("zhihu"):
+            logger.warning("[zhihu] Cookie 已标记失效，跳过爬取。请更新 Cookie 后重试。")
+            return [], []
         topics: list[CrawledTopic] = []
         embedded_comments: list[CrawledComment] = []
 

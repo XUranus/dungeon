@@ -1,5 +1,6 @@
 services:
   backend:
+    image: dungeon-backend
     build:
       context: ..
       dockerfile: deploy/backend.Dockerfile
@@ -20,6 +21,7 @@ services:
       start_period: 120s
 
   frontend:
+    image: dungeon-frontend
     build:
       context: ..
       dockerfile: deploy/frontend.Dockerfile

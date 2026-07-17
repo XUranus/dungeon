@@ -1,0 +1,91 @@
+---
+sidebar_position: 5
+title: 知识星球 API 签名机制
+description: 知识星球 (zsxq.com) API 请求签名算法详解
+---
+
+# 知识星球 API 签名机制
+
+知识星球 API（`api.zsxq.com`）除了 Cookie 认证外，还要求每个请求携带签名 Header，否则返回 `401 Unauthorized`。
+
+## 签名 Header 列表
+
+| Header | 说明 | 示例 |
+|--------|------|------|
+| `X-Signature` | 请求签名（SHA1） | `2eabbcb4964bc7b534b283854413c45c13d3f2e3` |
+| `X-Timestamp` | Unix 时间戳（秒） | `1784296757` |
+| `X-Request-Id` | UUID4 请求 ID | `0f803960c-4918-5aaa-caa6-9326d579f92` |
+| `X-Version` | 客户端版本号 | `2.94.0` |
+| `X-Aduid` | 设备标识（随机 UUID） | `43db52a91-0468-098f-80cc-63e3534f58b` |
+
+## 签名算法
+
+```
+X-Signature = SHA1( full_url + " " + timestamp + " " + request_id )
+```
+
+- **full_url**：完整请求 URL，**必须包含协议和域名**，如 `https://api.zsxq.com/v2/groups/28888555855451/topics`
+- **timestamp**：`X-Timestamp` 的值（Unix 秒级时间戳）
+- **request_id**：`X-Request-Id` 的值（UUID）
+- 三者以**空格**拼接，做 SHA1 哈希，输出 40 位小写十六进制
+
+### 验证示例
+
+```
+URL:       https://api.zsxq.com/v2/groups/28888555855451/members/answerers
+Timestamp: 1784296757
+RequestId: 0f803960c-4918-5aaa-caa6-9326d579f92
+
+拼接: "https://api.zsxq.com/v2/groups/28888555855451/members/answerers 1784296757 0f803960c-4918-5aaa-caa6-9326d579f92"
+
+SHA1 → 2eabbcb4964bc7b534b283854413c45c13d3f2e3 ✅
+```
+
+## Python 实现
+
+```python
+import hashlib
+import time
+import uuid
+
+def generate_zsxq_sign(full_url: str, timestamp: str, request_id: str) -> str:
+    """生成 X-Signature"""
+    message = f"{full_url} {timestamp} {request_id}"
+    return hashlib.sha1(message.encode()).hexdigest()
+
+def generate_zsxq_headers(full_url: str) -> dict:
+    """为 zsxq API 请求生成完整签名 headers"""
+    ts = str(int(time.time()))
+    req_id = str(uuid.uuid4())
+    return {
+        "X-Request-Id": req_id,
+        "X-Version": "2.94.0",
+        "X-Timestamp": ts,
+        "X-Signature": generate_zsxq_sign(full_url, ts, req_id),
+        "X-Aduid": str(uuid.uuid4()),
+    }
+```
+
+## 注意事项
+
+1. **URL 必须完整**：签名中的 URL 必须包含 `https://api.zsxq.com` 前缀，不能只用路径部分（如 `/v2/groups/...`），否则签名不匹配
+2. **Query 参数不参与签名**：URL 中的 `?scope=by_group&count=1` 等查询参数不包含在签名字符串中
+3. **X-Aduid 是随机值**：每次请求可随机生成，无需持久化，代表设备/广告标识
+4. **X-Version 跟随客户端版本**：当前使用 `2.94.0`，需随知识星球前端更新
+5. **时间戳精度为秒**：不是毫秒
+
+## Cookie 格式
+
+请求头 `Cookie` 中必须包含 `zsxq_access_token`，完整格式：
+
+```
+Cookie: zsxq_access_token=<TOKEN>; abtest_env=product; sensorsdata2015jssdkcross=...
+```
+
+其中 `zsxq_access_token` 是认证核心，`sensorsdata...` 等为埋点 Cookie，可选。
+
+## 参考资源
+
+- [fuzhengwei/xfg-zsxq-skills](https://github.com/fuzhengwei/xfg-zsxq-skills) — 签名算法参考（Algorithm C 变体）
+- [idealism-xxm/tampermonkey](https://github.com/idealism-xxm/tampermonkey) — 逆向自 wx.zsxq.com 前端 JS
+- [Cor72/PlanetCrawler-zsxq](https://github.com/Cor72/PlanetCrawler-zsxq) — Python 爬虫实现

@@ -9,8 +9,11 @@
 
 import httpx
 import asyncio
+import hashlib
+import uuid
 import random
 import re
+import time
 import logging
 from datetime import datetime
 from urllib.parse import unquote
@@ -39,6 +42,32 @@ RETRY_BACKOFF_BASE = 5  # 秒
 
 # 空页容忍: 连续空页达到此次数才判定翻完
 MAX_EMPTY_PAGES = 3
+
+# 空 body 的 MD5（GET 请求签名用）
+_EMPTY_BODY_MD5 = hashlib.md5(b"").hexdigest()
+
+
+def _generate_zsxq_sign(full_url: str, timestamp: str, request_id: str) -> str:
+    """生成 X-Signature: SHA1(full_url + " " + timestamp + " " + requestId)
+    full_url 必须包含完整域名，如 https://api.zsxq.com/v2/groups/xxx/topics
+    """
+    message = f"{full_url} {timestamp} {request_id}"
+    return hashlib.sha1(message.encode()).hexdigest()
+
+
+def _generate_zsxq_request_headers(full_url: str, body: str = "") -> dict:
+    """为 zsxq API 请求生成签名 headers
+    full_url: 完整 URL（含 https://api.zsxq.com 前缀）
+    """
+    ts = str(int(time.time()))
+    req_id = str(uuid.uuid4())
+    return {
+        "X-Request-Id": req_id,
+        "X-Version": "2.94.0",
+        "X-Timestamp": ts,
+        "X-Signature": _generate_zsxq_sign(full_url, ts, req_id),
+        "X-Aduid": str(uuid.uuid4()),
+    }
 
 
 class ZsxqCrawler(BaseCrawler):
@@ -69,6 +98,14 @@ class ZsxqCrawler(BaseCrawler):
         last_exc: Exception | None = None
         for attempt in range(1, MAX_RETRIES + 1):
             try:
+                # 注入签名 headers（签名需要完整 URL）
+                body = kwargs.get("content", b"")
+                if isinstance(body, bytes):
+                    body = body.decode("utf-8", errors="ignore")
+                full_url = f"{ZSXQ_API_BASE}{url}" if not url.startswith("http") else url
+                sign_headers = _generate_zsxq_request_headers(full_url, body)
+                existing_headers = kwargs.get("headers", {})
+                kwargs["headers"] = {**existing_headers, **sign_headers}
                 resp = await self.client.request(method, url, **kwargs)
                 if resp.status_code == 429:
                     wait = RETRY_BACKOFF_BASE * (2 ** (attempt - 1))
@@ -81,7 +118,8 @@ class ZsxqCrawler(BaseCrawler):
                 status = e.response.status_code
                 if status in (401, 403):
                     logger.error(f"[zsxq] {status} 认证失败, 请检查Cookie是否过期")
-                    from app.services.notify import notify
+                    from app.services.notify import notify, mark_cookie_expired
+                    mark_cookie_expired("zsxq")
                     notify(
                         "⚠️ 知识星球 Cookie 过期",
                         f"认证失败 ({status})，请在后台设置页面更新知识星球 Cookie",
@@ -158,6 +196,10 @@ class ZsxqCrawler(BaseCrawler):
         digest_ids: set[str] | None = None,
     ) -> tuple[list[CrawledTopic], list[CrawledComment]]:
         """爬取主题，同时提取内嵌评论。返回 (topics, embedded_comments)"""
+        from app.services.notify import is_cookie_expired
+        if is_cookie_expired("zsxq"):
+            logger.warning("[zsxq] Cookie 已标记失效，跳过爬取。请更新 Cookie 后重试。")
+            return [], []
         logger.info(f"[zsxq] 开始爬取主题: group_id={group_id}, limit={limit}, since={since}")
         topics: list[CrawledTopic] = []
         embedded_comments: list[CrawledComment] = []

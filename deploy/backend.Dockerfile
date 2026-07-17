@@ -17,7 +17,7 @@ RUN cd backend && pip install --no-cache-dir hatchling && \
     pip install --no-cache-dir \
     fastapi "uvicorn[standard]" "sqlalchemy[asyncio]" aiosqlite alembic \
     chromadb httpx openai apscheduler beautifulsoup4 sse-starlette \
-    "python-jose[cryptography]" rank-bm25 yfinance
+    "python-jose[cryptography]" rank-bm25 yfinance python-multipart
 
 # ── Node.js 依赖（爬虫脚本）──
 COPY package.json package-lock.json ./
@@ -29,6 +29,9 @@ RUN cd backend && npm ci --omit=dev 2>/dev/null || npm install
 # ── 复制源码 ──
 COPY backend/ /app/backend/
 COPY scripts/ /app/scripts/
+
+# ── 复制插件 manifest（后端扫描 frontend/src/plugins/*/manifest.json）──
+COPY frontend/src/plugins/ /app/frontend/src/plugins/
 
 # ── 数据目录（运行时挂载 volume）──
 RUN mkdir -p /app/data/chroma /app/data/audit

@@ -433,3 +433,170 @@ async def update_llm_config(req: LLMConfigRequest):
         embedding_model=req.embedding_model,
         embedding_provider=req.embedding_provider,
     )
+
+
+# ── 平台 Cookie 管理 ──
+
+PLATFORM_COOKIE_FIELDS: dict[str, list[dict]] = {
+    "zsxq": [
+        {"key": "zsxq_cookie", "label": "知识星球 Cookie", "placeholder": "zsxq_access_token=..."},
+        {"key": "zsxq_group_id", "label": "星球 Group ID", "placeholder": "28888555855451"},
+    ],
+    "zhihu": [
+        {"key": "zhihu_cookie", "label": "知乎 Cookie", "placeholder": "_xsrf=...; z_c0=..."},
+        {"key": "zhihu_url_token", "label": "知乎 URL Token", "placeholder": "yang-lei-96-72"},
+        {"key": "zhihu_sign_server", "label": "知乎签名服务", "placeholder": "http://localhost:17007"},
+    ],
+}
+
+
+class PlatformConfigResponse(BaseModel):
+    platform: str
+    configured: bool
+    cookie_valid: bool | None = None  # None=未检测, True=有效, False=过期
+    cookie_error: str = ""
+    fields: list[dict]
+
+
+class PlatformConfigUpdateRequest(BaseModel):
+    values: dict[str, str]
+
+
+async def _validate_zsxq_cookie() -> tuple[bool, str]:
+    """轻量检测知识星球 Cookie 是否有效"""
+    import httpx
+    cookie = settings.zsxq_cookie or ""
+    group_id = settings.zsxq_group_id or ""
+    if not cookie or not group_id:
+        return False, "未配置"
+    try:
+        async with httpx.AsyncClient(timeout=15) as client:
+            from app.crawlers.zsxq import _generate_zsxq_request_headers
+            # 使用 /members/answerers 端点验证（轻量、无副作用）
+            full_url = f"https://api.zsxq.com/v2/groups/{group_id}/members/answerers"
+            sign_headers = _generate_zsxq_request_headers(full_url)
+            resp = await client.get(
+                full_url,
+                headers={
+                    "Cookie": cookie,
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Origin": "https://wx.zsxq.com",
+                    "Referer": "https://wx.zsxq.com/",
+                    **sign_headers,
+                },
+            )
+            if resp.status_code in (401, 403):
+                return False, f"认证失败 ({resp.status_code})"
+            data = resp.json()
+            if not data.get("succeeded"):
+                code = data.get("code", 0)
+                if code == 1059:
+                    return False, "Cookie 已过期"
+                return False, f"API 错误: {code}"
+            return True, "有效"
+    except Exception as e:
+        return False, f"连接失败: {type(e).__name__}"
+
+
+async def _validate_zhihu_cookie() -> tuple[bool, str]:
+    """轻量检测知乎 Cookie 是否有效"""
+    import httpx
+    cookie = settings.zhihu_cookie or ""
+    url_token = settings.zhihu_url_token or ""
+    if not cookie or not url_token:
+        return False, "未配置"
+    try:
+        async with httpx.AsyncClient(timeout=15, follow_redirects=False) as client:
+            resp = await client.get(
+                f"https://www.zhihu.com/people/{url_token}",
+                headers={
+                    "Cookie": cookie,
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                },
+            )
+            if resp.status_code in (401, 403):
+                return False, f"认证失败 ({resp.status_code})"
+            if resp.status_code == 302:
+                location = resp.headers.get("location", "")
+                if "signin" in location or "login" in location:
+                    return False, "Cookie 已过期，需要重新登录"
+            if resp.status_code != 200:
+                return False, f"HTTP {resp.status_code}"
+            return True, "有效"
+    except Exception as e:
+        return False, f"连接失败: {type(e).__name__}"
+
+
+_VALIDATORS = {
+    "zsxq": _validate_zsxq_cookie,
+    "zhihu": _validate_zhihu_cookie,
+}
+
+
+@router.get("/platform-config/{platform}", response_model=PlatformConfigResponse)
+async def get_platform_config(platform: str):
+    """获取指定平台的 Cookie 配置（脱敏）+ 验证状态"""
+    fields_spec = PLATFORM_COOKIE_FIELDS.get(platform)
+    if not fields_spec:
+        raise HTTPException(status_code=404, detail=f"未知平台: {platform}")
+
+    fields = []
+    all_configured = True
+    for spec in fields_spec:
+        raw = getattr(settings, spec["key"], "") or ""
+        if raw and len(raw) > 16:
+            display = raw[:8] + "..." + raw[-4:]
+        elif raw:
+            display = raw[:4] + "..."
+        else:
+            display = ""
+            all_configured = False
+        fields.append({
+            "key": spec["key"],
+            "label": spec["label"],
+            "placeholder": spec["placeholder"],
+            "has_value": bool(raw),
+            "display": display,
+        })
+
+    # 验证 Cookie 有效性
+    cookie_valid = None
+    cookie_error = ""
+    if all_configured:
+        validator = _VALIDATORS.get(platform)
+        if validator:
+            cookie_valid, cookie_error = await validator()
+
+    return PlatformConfigResponse(
+        platform=platform,
+        configured=all_configured,
+        cookie_valid=cookie_valid,
+        cookie_error=cookie_error,
+        fields=fields,
+    )
+
+
+@router.put("/platform-config/{platform}")
+async def update_platform_config(platform: str, req: PlatformConfigUpdateRequest):
+    """更新指定平台的 Cookie 配置"""
+    fields_spec = PLATFORM_COOKIE_FIELDS.get(platform)
+    if not fields_spec:
+        raise HTTPException(status_code=404, detail=f"未知平台: {platform}")
+
+    valid_keys = {spec["key"] for spec in fields_spec}
+    patch = {}
+    for k, v in req.values.items():
+        if k in valid_keys:
+            patch[k] = v
+
+    if not patch:
+        raise HTTPException(status_code=400, detail="无有效字段")
+
+    settings.update(patch)
+    logger.info("平台 %s 配置已更新: %s", platform, list(patch.keys()))
+
+    # Cookie 更新后清除失效标记，恢复爬取
+    from app.services.notify import clear_cookie_expired
+    clear_cookie_expired(platform)
+
+    return {"platform": platform, "updated": list(patch.keys())}
