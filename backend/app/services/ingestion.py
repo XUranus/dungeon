@@ -200,7 +200,12 @@ async def _ingest_column_articles(
 ) -> int:
     """抓取知识星球专栏文章并入库，返回新增文章数"""
     from app.crawlers.zsxq import ZsxqCrawler
+    from app.services.notify import is_cookie_expired
     assert isinstance(crawler, ZsxqCrawler)
+
+    if is_cookie_expired("zsxq"):
+        logger.warning("[zsxq] Cookie 已标记失效，跳过专栏文章抓取")
+        return 0
 
     # 尝试动态获取专栏列表，失败则用硬编码
     columns = await crawler.crawl_columns(group_id)

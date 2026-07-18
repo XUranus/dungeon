@@ -46,8 +46,9 @@ async def _run_parse(task_id: int, triggered_by: str):
         try:
             from app.services.ingestion import _ingest_column_articles
             from app.crawlers.zsxq import ZsxqCrawler
+            from app.services.notify import is_cookie_expired
 
-            if settings.zsxq_cookie and settings.zsxq_group_id:
+            if settings.zsxq_cookie and settings.zsxq_group_id and not is_cookie_expired("zsxq"):
                 async with async_session() as db:
                     crawler = ZsxqCrawler()
                     try:

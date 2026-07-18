@@ -145,6 +145,10 @@ class ZsxqCrawler(BaseCrawler):
         raise last_exc  # type: ignore[misc]
 
     async def crawl_kol_profile(self, group_id: str) -> CrawledKOLProfile:
+        from app.services.notify import is_cookie_expired
+        if is_cookie_expired("zsxq"):
+            logger.warning("[zsxq] Cookie 已标记失效，跳过星球信息获取")
+            return CrawledKOLProfile(name="", platform_id=group_id)
         logger.info(f"[zsxq] 获取星球信息: group_id={group_id}")
         resp = await self._request_with_retry("GET", f"/groups/{group_id}")
         data = resp.json().get("resp_data", {}).get("group", {})
@@ -161,6 +165,10 @@ class ZsxqCrawler(BaseCrawler):
 
     async def fetch_digest_ids(self, group_id: str, count: int = 100) -> set[str]:
         """获取精华文章的 topic_id 集合"""
+        from app.services.notify import is_cookie_expired
+        if is_cookie_expired("zsxq"):
+            logger.warning("[zsxq] Cookie 已标记失效，跳过精华列表获取")
+            return set()
         digest_ids: set[str] = set()
         index = 0
         while index < count:
@@ -292,6 +300,10 @@ class ZsxqCrawler(BaseCrawler):
     async def crawl_comments(
         self, topic_id: str, limit: int = 500, **kwargs
     ) -> list[CrawledComment]:
+        from app.services.notify import is_cookie_expired
+        if is_cookie_expired("zsxq"):
+            logger.warning("[zsxq] Cookie 已标记失效，跳过评论抓取")
+            return []
         comments: list[CrawledComment] = []
         page = 0
 
@@ -329,6 +341,10 @@ class ZsxqCrawler(BaseCrawler):
 
     async def crawl_columns(self, group_id: str) -> list[dict]:
         """获取星球的专栏列表，返回 [{column_id, name, topics_count}]"""
+        from app.services.notify import is_cookie_expired
+        if is_cookie_expired("zsxq"):
+            logger.warning("[zsxq] Cookie 已标记失效，跳过专栏列表获取")
+            return []
         try:
             resp = await self._request_with_retry("GET", f"/groups/{group_id}/columns")
             columns = resp.json().get("resp_data", {}).get("columns", [])
@@ -350,6 +366,10 @@ class ZsxqCrawler(BaseCrawler):
         since: datetime | None = None,
     ) -> list[CrawledTopic]:
         """抓取专栏下的文章（支持分页 + 增量），返回 CrawledTopic 列表"""
+        from app.services.notify import is_cookie_expired
+        if is_cookie_expired("zsxq"):
+            logger.warning("[zsxq] Cookie 已标记失效，跳过专栏文章抓取")
+            return []
         logger.info("[zsxq] 开始抓取专栏文章: column_id=%d, limit=%d, since=%s", column_id, limit, since)
 
         # Step 1: 分页列出专栏中的文章
