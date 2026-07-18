@@ -148,7 +148,7 @@ RestartSec=5
 # Security hardening
 NoNewPrivileges=true
 ProtectSystem=strict
-ReadWritePaths=/opt/dungeon-lord/data
+ReadWritePaths=/opt/dungeon/data
 
 [Install]
 WantedBy=multi-user.target
@@ -291,75 +291,228 @@ Without `proxy_buffering off`, the client will not receive any SSE events until 
 
 ## Docker Deployment
 
+### 代码与数据分离
+
+项目采用 **代码与数据完全分离** 的部署方式：
+
+```
+宿主机                              容器
+─────────────────────────────────────────────────
+/opt/dungeon-lord/                  (构建时 COPY 进镜像，不挂载)
+  ├── docker-compose.yml
+  ├── backend/
+  │   ├── config.json  ──────────→  /app/backend/config.json  (只读)
+  │   └── app/
+  └── deploy/
+      └── backend.Dockerfile
+
+/opt/dungeon/data/                  /app/data/  (读写)
+  ├── app.db                   ←→   SQLite 数据库
+  ├── chroma/                  ←→   ChromaDB 向量库
+  ├── images/                  ←→   图片文件
+  ├── uploads/                 ←→   用户上传附件
+  ├── plugins/                 ←→   插件配置
+  └── notify_state.json        ←→   通知节流状态
+```
+
+所有数据使用 **宿主机 bind mount**，不使用 Docker 管理卷。这样做的好处：
+
+- 备份只需打包数据目录和配置文件
+- 迁移只需复制数据目录到新机器
+- 容器可以随时删除重建，数据不受影响
+
+### 配置文件 (.env)
+
+在项目根目录创建 `.env` 文件（参考 `.env.example`）：
+
+```bash
+# 数据目录 — 建议使用绝对路径，方便备份和迁移
+DATA_DIR=/opt/dungeon/data
+
+# 配置文件路径
+CONFIG_JSON=/opt/dungeon-lord/backend/config.json
+
+# 前端对外端口
+FRONTEND_PORT=6666
+```
+
 ### docker-compose.yml
 
 ```yaml
-version: "3.8"
-
 services:
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-    ports:
-      - "8000:8000"
+      context: .
+      dockerfile: deploy/backend.Dockerfile
+    container_name: dungeon-lord-backend
+    restart: unless-stopped
+    expose:
+      - "8000"
     volumes:
-      - ./data:/app/data          # SQLite + ChromaDB persistence
-      - ./backend/config.json:/app/config.json
+      - ${DATA_DIR:-./data}:/app/data
+      - ${CONFIG_JSON:-./backend/config.json}:/app/backend/config.json:ro
     environment:
       - PYTHONUNBUFFERED=1
-    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/api/health"]
       interval: 30s
       timeout: 10s
       retries: 3
+      start_period: 180s
 
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    ports:
-      - "3000:80"
-    depends_on:
-      - backend
+    image: dungeon-frontend:latest
+    container_name: dungeon-lord-frontend
     restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-6666}:80"
+    volumes:
+      - ${DATA_DIR:-./data}/images:/usr/share/nginx/images:ro
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 ```
 
-### Backend Dockerfile
-
-```dockerfile
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential curl && \
-    rm -rf /var/lib/apt/lists/*
-
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-COPY . .
-
-EXPOSE 8000
-
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-```
-
-### Running with Docker Compose
+### 首次部署
 
 ```bash
-# Build and start all services
-docker compose up -d
+# 1. 克隆代码
+git clone https://github.com/XUranus/dungeon.git /opt/dungeon-lord
+cd /opt/dungeon-lord
 
-# View logs
+# 2. 创建数据目录
+mkdir -p /opt/dungeon/data
+
+# 3. 创建配置文件（从模板复制并编辑）
+cp backend/config.example.json backend/config.json
+# 编辑 config.json，填入 API Key、Cookie 等
+
+# 4. 创建 .env
+cp .env.example .env
+# 编辑 .env，设置 DATA_DIR 等
+
+# 5. 构建并启动
+docker compose up -d --build
+
+# 6. 查看日志
+docker compose logs -f backend
+```
+
+### 日常运维
+
+```bash
+# 查看容器状态
+docker compose ps
+
+# 查看后端日志
 docker compose logs -f backend
 
-# Stop all services
+# 重启后端（不重建镜像）
+docker compose restart backend
+
+# 更新代码并重建
+git pull && docker compose up -d --build
+
+# 停止所有服务
 docker compose down
 ```
+
+---
+
+## 数据备份与迁移
+
+### 备份
+
+所有持久化数据集中在两个位置，备份只需打包它们：
+
+```bash
+# 完整备份（数据 + 配置）
+BACKUP_DATE=$(date +%Y%m%d)
+tar czf dungeon-backup-${BACKUP_DATE}.tar.gz \
+  /opt/dungeon/data/ \
+  /opt/dungeon-lord/backend/config.json \
+  /opt/dungeon-lord/.env
+
+echo "备份完成: dungeon-backup-${BACKUP_DATE}.tar.gz"
+ls -lh dungeon-backup-${BACKUP_DATE}.tar.gz
+```
+
+**备份内容清单：**
+
+| 文件 | 说明 | 大小参考 |
+|------|------|---------|
+| `data/app.db` | SQLite 数据库（主题、评论、用户） | ~40MB |
+| `data/chroma/` | ChromaDB 向量库（RAG 检索用） | ~10MB |
+| `data/images/` | 爬取的图片文件 | ~200MB |
+| `data/uploads/` | 用户上传的附件 | 视使用量 |
+| `data/plugins/` | 插件配置 | ~1KB |
+| `data/notify_state.json` | 通知节流状态 | ~1KB |
+| `backend/config.json` | 应用配置（含密钥） | ~3KB |
+| `.env` | Docker Compose 环境变量 | ~100B |
+
+:::tip 定时备份
+建议用 cron 每日自动备份：
+
+```bash
+# crontab -e
+0 3 * * * tar czf /opt/dungeon-backups/dungeon-$(date +\%Y\%m\%d).tar.gz /opt/dungeon/data/ /opt/dungeon-lord/backend/config.json /opt/dungeon-lord/.env
+```
+:::
+
+### 恢复
+
+```bash
+# 1. 在新机器上安装 Docker 和 Docker Compose
+
+# 2. 克隆代码
+git clone https://github.com/XUranus/dungeon.git /opt/dungeon-lord
+cd /opt/dungeon-lord
+
+# 3. 解压备份
+tar xzf dungeon-backup-20260718.tar.gz -C /
+
+# 4. 创建 .env（如果备份中没有）
+cat > .env << 'EOF'
+DATA_DIR=/opt/dungeon/data
+CONFIG_JSON=/opt/dungeon-lord/backend/config.json
+FRONTEND_PORT=6666
+EOF
+
+# 5. 构建并启动
+docker compose up -d --build
+
+# 6. 验证
+docker compose ps
+curl http://localhost:6666/api/health
+```
+
+### 迁移到新服务器
+
+迁移步骤与恢复相同。核心原则：**只需迁移数据目录和配置文件，代码从 git 重新拉取。**
+
+```bash
+# 在旧服务器上备份
+tar czf dungeon-migrate.tar.gz \
+  /opt/dungeon/data/ \
+  /opt/dungeon-lord/backend/config.json \
+  /opt/dungeon-lord/.env
+
+# 传输到新服务器
+scp dungeon-migrate.tar.gz new-server:/tmp/
+
+# 在新服务器上恢复（按上述「恢复」步骤执行）
+```
+
+:::warning 注意事项
+- 备份包含 `config.json` 中的 API Key 和 Cookie，注意保管安全
+- ChromaDB 向量库依赖 Python 版本和 ChromaDB 版本，跨大版本迁移可能需要重建索引
+- SQLite 数据库可以直接复制，无需 dump
+:::
 
 ---
 
@@ -384,18 +537,24 @@ Production deployments **must** modify the following values:
 
 ### Data Directory Structure
 
-Runtime-generated data files:
+所有运行时数据都在独立的数据目录中（默认 `/opt/dungeon/data`）：
 
 ```
-backend/
-  config.json              # Application configuration
-  gunicorn.conf.py         # Gunicorn configuration
-data/
-  app.db                   # SQLite database
-  chroma/                  # ChromaDB vector store
+/opt/dungeon/data/
+  app.db                   # SQLite 数据库
+  app.db.bak               # 数据库备份
+  chroma/                  # ChromaDB 向量库
+  images/                  # 爬取的图片
+  uploads/                 # 用户上传附件
+  plugins/                 # 插件配置
+  notify_state.json        # 通知节流状态
+  runtime_config.json      # 运行时配置
+
+/opt/dungeon-lord/backend/
+  config.json              # 应用配置（密钥、Cookie 等）
 ```
 
-Ensure the service user has read/write permissions on the `data/` directory.
+确保服务用户对数据目录有读写权限，对配置目录有读取权限。
 
 ### Generating a Secure JWT Secret
 
