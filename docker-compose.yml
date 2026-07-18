@@ -1,16 +1,15 @@
 services:
   backend:
-    image: dungeon-backend
     build:
-      context: ..
+      context: .
       dockerfile: deploy/backend.Dockerfile
     container_name: dungeon-lord-backend
     restart: unless-stopped
     expose:
       - "8000"
     volumes:
-      - ../data:/app/data
-      - ../backend/config.json:/app/backend/config.json
+      - ${DATA_DIR:-./data}:/app/data
+      - ${CONFIG_JSON:-./backend/config.json}:/app/backend/config.json:ro
     environment:
       - PYTHONUNBUFFERED=1
     healthcheck:
@@ -18,19 +17,16 @@ services:
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 120s
+      start_period: 180s
 
   frontend:
-    image: dungeon-frontend
-    build:
-      context: ..
-      dockerfile: deploy/frontend.Dockerfile
+    image: dungeon-frontend:latest
     container_name: dungeon-lord-frontend
     restart: unless-stopped
     ports:
       - "${FRONTEND_PORT:-6666}:80"
     volumes:
-      - ../data/images:/usr/share/nginx/images:ro
+      - ${DATA_DIR:-./data}/images:/usr/share/nginx/images:ro
     depends_on:
       backend:
         condition: service_healthy
